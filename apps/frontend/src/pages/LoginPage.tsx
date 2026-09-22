@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LogIn, Zap } from 'lucide-react';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -16,7 +15,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(form.email, form.password, form.orgSlug);
-      navigate('/');
+      navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error?.message ?? 'Invalid credentials. Please try again.');
     } finally {
@@ -28,9 +27,9 @@ export default function LoginPage() {
     <div className="login-page">
       <div className="login-card">
         <div className="brand">
-          <div style={{ fontSize: 40, marginBottom: 8 }}>⚡</div>
+          <img src="/logo.png" alt="Question Forge Logo" style={{ width: 64, height: 64, borderRadius: 16, objectFit: 'cover' }} />
           <h1>Question Forge</h1>
-          <p>Enterprise Assessment Platform</p>
+          <p>Sign in to your assessment platform</p>
         </div>
 
         {error && <div className="alert alert-error" style={{ marginBottom: 20 }}>{error}</div>}
@@ -41,7 +40,7 @@ export default function LoginPage() {
             <input
               className="form-input"
               type="text"
-              placeholder="e.g. acme-corp"
+              placeholder="acme-corp"
               value={form.orgSlug}
               onChange={e => setForm(f => ({ ...f, orgSlug: e.target.value }))}
               required
@@ -72,17 +71,15 @@ export default function LoginPage() {
           <button
             type="submit"
             className="btn btn-primary btn-lg"
-            style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
+            style={{ width: '100%', justifyContent: 'center', marginTop: 16 }}
             disabled={loading}
           >
-            {loading ? <span className="spinner" /> : <LogIn size={16} />}
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? <span className="spinner" /> : 'Continue →'}
           </button>
         </form>
 
-        <p style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 12, marginTop: 24 }}>
-          <Zap size={11} style={{ display: 'inline', marginRight: 4 }} />
-          Open-source · Bring Your Own Key · Self-hosted
+        <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, marginTop: 32 }}>
+          Open-source · Bring Your Own Key
         </p>
       </div>
     </div>

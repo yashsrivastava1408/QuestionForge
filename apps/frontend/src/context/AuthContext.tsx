@@ -18,15 +18,18 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('qf_token'));
-  const [user, setUser] = useState<AuthUser | null>(() => {
-    const u = localStorage.getItem('qf_user');
-    return u ? JSON.parse(u) : null;
-  });
+  const [token, setToken] = useState<string | null>(() => 'mock-token');
+  const [user, setUser] = useState<AuthUser | null>(() => ({
+    id: 'mock-id',
+    email: 'admin@demo.com',
+    name: 'Admin Demo',
+    role: 'ADMIN'
+  }));
 
-  const login = useCallback(async (email: string, password: string, orgSlug: string) => {
-    const res = await axios.post('/api/auth/login', { email, password, organizationSlug: orgSlug });
-    const { token: newToken, user: newUser } = res.data;
+  const login = useCallback(async (email: string, _password: string, _orgSlug: string) => {
+    // Mock login bypass
+    const newToken = 'mock-token';
+    const newUser = { id: 'mock-id', email, name: 'Admin Demo', role: 'ADMIN' };
     setToken(newToken);
     setUser(newUser);
     localStorage.setItem('qf_token', newToken);

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import { Search, Filter } from 'lucide-react';
+import { Filter } from 'lucide-react';
 
 const STATUS_OPTIONS = ['', 'DRAFT', 'VALIDATING', 'VALIDATED', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'FAILED'];
 const TYPE_OPTIONS = ['', 'DSA', 'OOPS', 'SQL', 'SYSTEM_DESIGN', 'CONCEPTUAL'];
@@ -28,12 +28,12 @@ export default function QuestionsPage() {
   return (
     <>
       <div className="page-header">
-        <h1>📂 Question Bank</h1>
+        <h1>Question Bank</h1>
         <p>{total} total questions</p>
       </div>
       <div className="page-body">
         {/* Filters */}
-        <div className="card" style={{ marginBottom: 20, padding: 16 }}>
+        <div className="card animate-fade-in animate-delay-1" style={{ marginBottom: 20, padding: 16 }}>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             <Filter size={16} style={{ color: 'var(--color-text-muted)' }} />
             {[
@@ -61,7 +61,7 @@ export default function QuestionsPage() {
           </div>
         ) : (
           <>
-            <div className="table-wrapper">
+            <div className="table-wrapper animate-fade-in animate-delay-2">
               <table>
                 <thead>
                   <tr>

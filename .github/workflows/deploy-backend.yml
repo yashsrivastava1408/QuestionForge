@@ -1,0 +1,65 @@
+name: Deploy API to EC2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/api/**'
+      - 'packages/**'
+      - 'docker-compose.prod.yml'
+      - '.github/workflows/deploy-backend.yml'
+
+jobs:
+  build-and-test:
+    name: Build and Check API
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Verify API Build
+        run: npm run build --workspace=apps/api
+
+  deploy:
+    name: Deploy to AWS EC2
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        
+      - name: SSH and Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "Starting deployment on EC2..."
+            
+            # 1. Clone repo if it doesn't exist, otherwise pull latest
+            if [ ! -d "/home/ubuntu/question-forge" ]; then
+              git clone https://github.com/${{ github.repository }}.git /home/ubuntu/question-forge
+            fi
+            
+            cd /home/ubuntu/question-forge
+            git fetch origin main
+            git reset --hard origin/main
+            
+            # 2. Build and restart the API container
+            # (Requires you to manually create a .env file on the EC2 instance once)
+            sudo docker-compose -f docker-compose.prod.yml up -d --build api
+            
+            echo "Deployment successful!"

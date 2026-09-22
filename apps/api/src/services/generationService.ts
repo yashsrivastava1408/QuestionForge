@@ -26,17 +26,21 @@ async function _runPipelineAsync(jobId: string, config: GenerationWizardConfig) 
   for (const { difficulty, type } of difficultyPlan) {
     let retries = 0;
     let success = false;
+    let previousDraft: any = null;
+    let criticism = '';
 
     while (retries < 3 && !success) {
       try {
         logger.info(`[Job ${jobId}] Generating ${type} / ${difficulty} (attempt ${retries + 1})`);
-        const rawQuestion = await llm.generateQuestion({ ...config, difficulty, questionType: type });
+        const rawQuestion = await llm.generateQuestion({ ...config, difficulty, questionType: type }, previousDraft, criticism);
 
         // Deduplication check
         const isDuplicate = await checkDuplicate(rawQuestion.statement, config.organizationId);
         if (isDuplicate) {
           logger.warn(`[Job ${jobId}] Duplicate detected, skipping.`);
           retries++;
+          criticism = "Question generated was too similar to an existing question in the bank. You must generate a completely novel question.";
+          previousDraft = rawQuestion;
           continue;
         }
 
@@ -74,11 +78,16 @@ async function _runPipelineAsync(jobId: string, config: GenerationWizardConfig) 
               data: { status: 'FAILED', validationResult: validationResult as any },
             });
             logger.warn(`[Job ${jobId}] Question failed after 3 retries. Marked FAILED.`);
+          } else {
+            logger.info(`[Job ${jobId}] Validation failed. Retrying with reflection.`);
+            previousDraft = rawQuestion;
+            criticism = validationResult.details || "Question failed internal validation suite.";
           }
         }
       } catch (err: any) {
         logger.error(`[Job ${jobId}] Error in generation attempt`, { error: err.message });
         retries++;
+        criticism = err.message;
       }
     }
   }

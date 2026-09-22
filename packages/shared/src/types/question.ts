@@ -1,4 +1,4 @@
-export type QuestionType = 'DSA' | 'OOPS' | 'SYSTEM_DESIGN' | 'SQL' | 'CONCEPTUAL';
+export type QuestionType = 'DSA' | 'OOPS' | 'SYSTEM_DESIGN' | 'SQL' | 'CONCEPTUAL' | 'MCQ';
 export type Difficulty = 'EASY' | 'MEDIUM' | 'HARD';
 export type QuestionStatus =
   | 'DRAFT'

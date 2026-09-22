@@ -19,11 +19,12 @@ const generateSchema = z.object({
     message: 'Difficulty distribution must sum to 100',
   }),
   totalQuestions: z.number().min(1).max(100),
-  questionTypes: z.array(z.enum(['DSA', 'OOPS', 'SYSTEM_DESIGN', 'SQL', 'CONCEPTUAL'])).min(1),
+  questionTypes: z.array(z.enum(['DSA', 'OOPS', 'SYSTEM_DESIGN', 'SQL', 'CONCEPTUAL', 'MCQ'])).min(1),
   languages: z.array(z.string()).default(['python', 'java', 'cpp', 'javascript']),
   companyStyle: z.string().optional(),
   llmProvider: z.enum(['anthropic', 'openai', 'gemini']).default('anthropic'),
   paperId: z.string().optional(),
+  mcqOptionsCount: z.number().min(2).max(10).optional().default(4),
 });
 
 // POST /api/generate — Start generation job

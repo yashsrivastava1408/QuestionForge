@@ -6,6 +6,20 @@ Question Forge is an open-source platform designed for enterprise HR and univers
 
 ---
 
+## Latest Updates
+
+- **Ultra-Minimalist UI Overhaul**: Upgraded the frontend to a premium, pitch-black Vercel/Linear-inspired aesthetic with 1px structural borders and 150ms staggered micro-animations.
+- **"Engineering Engine" Dashboard**: Completely redesigned the dashboard based on Figma AI outputs, featuring sparkline metrics, live "Recent Generations" tables, and glassmorphic quick-action panels.
+- **LLM Provider Fallback Chain (BYOK)**: The engine now auto-detects any configured key — Anthropic Claude, OpenAI GPT-4o, or Google Gemini (free tier). Set any key in `.env` and it just works. No single provider dependency.
+- **Cross-Model Adversarial Debate**: The Adversary Agent in the validation pipeline now deliberately uses a **different LLM** than the Generator to expose blind spots the generating model would miss.
+- **Difficulty Calibration Constraints**: Strict algorithmic complexity requirements are now injected into every prompt — Easy must be O(n), Medium must use DP/two-pointers, Hard must use specialized data structures.
+- **Chain of Thought (CoT) Pre-generation**: The LLM generation pipeline now strictly requires a `<thinking>` block to reason about edge cases and constraints before outputting the final JSON, drastically improving question quality.
+- **Multi-Agent Reflection Loop**: Failed questions (e.g., failing the internal sandbox) are no longer discarded. The exact criticism and the failed draft are sent back to the LLM to self-correct in a Critic-Generator loop.
+- **MCQ Generation**: Added robust support for generating Multiple Choice Questions with configurable distractor options.
+- **Auto-Generate Assessment Papers**: Instantly draft a full assessment paper by specifying a title and desired question count, which automatically aggregates randomly selected, approved questions from your bank.
+
+---
+
 ## High-Level Architecture
 
 ```mermaid
@@ -176,6 +190,41 @@ npm run dev
 
 * Frontend Application: `http://localhost:5173`
 * Backend API: `http://localhost:4000`
+
+### Deploying to Production (AWS)
+
+Question Forge follows the **12-Factor App** design principle, meaning it is completely infrastructure-agnostic. You can deploy it to your own AWS account without altering any code.
+
+```mermaid
+flowchart TD
+    subgraph Vercel [Vercel Edge Network]
+        FE[React Frontend]
+    end
+
+    subgraph GitHub [GitHub Actions CI/CD]
+        Code[Source Code] -->|Push to Main| Build[Action: Build & Deploy]
+    end
+
+    subgraph AWS [AWS Cloud Infrastructure]
+        EC2_API[EC2 Instance: Node.js API]
+        EC2_Sandbox[EC2 Instance: Piston Sandbox]
+        RDS[(RDS: PostgreSQL)]
+        S3[S3 Bucket: PDF/JSON Exports]
+    end
+    
+    Code -->|Push to Main| FE
+    Build -->|SSH Deploy| EC2_API
+    FE <-->|HTTPS API Calls| EC2_API
+    EC2_API <-->|Execute Code| EC2_Sandbox
+    EC2_API <-->|Read/Write| RDS
+    EC2_API -->|Upload| S3
+```
+
+1. **Database**: Spin up an **AWS RDS PostgreSQL** instance and update your `.env` with the new `DATABASE_URL`.
+2. **File Storage**: Create an **AWS S3 Bucket** for PDF/JSON exports and update `S3_BUCKET_NAME` and your IAM credentials in `.env`.
+3. **Sandbox**: Deploy the Piston Docker image to an **AWS EC2** instance and point `PISTON_API_URL` to it.
+4. **CI/CD Pipeline**: The repository includes a ready-to-use GitHub Actions workflow (`deploy-backend.yml`). Just add `EC2_HOST` and `EC2_SSH_KEY` to your GitHub secrets, and any push to `main` will automatically deploy the API to your EC2 instance.
+5. **Frontend**: The React frontend can be hosted for free on **Vercel**, **Netlify**, or **AWS Amplify** by simply linking your GitHub repository.
 
 ---
 

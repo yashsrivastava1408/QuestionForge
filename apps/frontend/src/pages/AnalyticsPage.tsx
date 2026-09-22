@@ -25,24 +25,24 @@ export default function AnalyticsPage() {
   return (
     <>
       <div className="page-header">
-        <h1>📈 Analytics</h1>
+        <h1>Analytics</h1>
         <p>Topic coverage, difficulty distribution, and validation health.</p>
       </div>
       <div className="page-body">
         {/* Validation Health */}
         <div className="stat-grid" style={{ marginBottom: 28 }}>
-          <div className="stat-card">
-            <div className="stat-icon" style={{ color: 'var(--color-success)' }}>✅</div>
+          <div className="stat-card animate-fade-in animate-delay-1">
+            <div className="stat-icon" style={{ color: 'var(--color-success)' }}></div>
             <div className="stat-value" style={{ color: 'var(--color-success)' }}>{validationData?.validationRate ?? 0}%</div>
             <div className="stat-label">Validation Pass Rate</div>
           </div>
-          <div className="stat-card">
-            <div className="stat-icon" style={{ color: 'var(--color-error)' }}>❌</div>
+          <div className="stat-card animate-fade-in animate-delay-2">
+            <div className="stat-icon" style={{ color: 'var(--color-error)' }}></div>
             <div className="stat-value" style={{ color: 'var(--color-error)' }}>{validationData?.failureRate ?? 0}%</div>
             <div className="stat-label">Failure Rate</div>
           </div>
-          <div className="stat-card">
-            <div className="stat-icon" style={{ color: 'var(--color-primary)' }}>📊</div>
+          <div className="stat-card animate-fade-in animate-delay-3">
+            <div className="stat-icon" style={{ color: 'var(--color-primary)' }}></div>
             <div className="stat-value" style={{ color: 'var(--color-primary)' }}>{validationData?.total ?? 0}</div>
             <div className="stat-label">Total Processed</div>
           </div>
@@ -50,8 +50,8 @@ export default function AnalyticsPage() {
 
         <div className="grid-2" style={{ marginBottom: 20 }}>
           {/* Topic Coverage */}
-          <div className="card">
-            <div className="card-title">📚 Topic Coverage Heatmap</div>
+          <div className="card animate-fade-in animate-delay-4">
+            <div className="card-title">Topic Coverage Heatmap</div>
             <div className="card-subtitle">Questions per topic (top 10)</div>
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={topicChartData} margin={{ top: 5, right: 5, bottom: 40, left: 0 }}>
@@ -70,8 +70,8 @@ export default function AnalyticsPage() {
           </div>
 
           {/* Difficulty Pie */}
-          <div className="card">
-            <div className="card-title">🎯 Difficulty Distribution</div>
+          <div className="card animate-fade-in animate-delay-5">
+            <div className="card-title">Difficulty Distribution</div>
             <div className="card-subtitle">Across all questions</div>
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
@@ -86,8 +86,8 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Question Type Breakdown */}
-        <div className="card">
-          <div className="card-title">📝 Question Type Breakdown</div>
+        <div className="card animate-fade-in animate-delay-6">
+          <div className="card-title">Question Type Breakdown</div>
           <div className="card-subtitle">Distribution across DSA, OOPS, SQL, etc.</div>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 16 }}>
             {typeData.map((t: any) => (

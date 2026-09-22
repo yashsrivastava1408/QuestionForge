@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { CheckCircle, XCircle, ChevronDown, ChevronUp, Code, AlertTriangle } from 'lucide-react';
+import { CheckCircle, XCircle, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function ReviewPage() {
   const qc = useQueryClient();
@@ -32,7 +32,7 @@ export default function ReviewPage() {
   return (
     <>
       <div className="page-header">
-        <h1>📋 Review Queue</h1>
+        <h1>Review Queue</h1>
         <p>{questions.length} question{questions.length !== 1 ? 's' : ''} awaiting your review.</p>
       </div>
       <div className="page-body">
@@ -44,8 +44,8 @@ export default function ReviewPage() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {questions.map((q: any) => (
-              <div key={q.id} className="question-card animate-fade-in">
+            {questions.map((q: any, i: number) => (
+              <div key={q.id} className={`question-card animate-fade-in animate-delay-${Math.min(i + 1, 4)}`}>
                 <div className="question-card-header">
                   <div className="question-card-title">{q.title}</div>
                   <button

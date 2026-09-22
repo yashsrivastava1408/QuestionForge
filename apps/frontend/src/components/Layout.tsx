@@ -6,16 +6,16 @@ import {
 } from 'lucide-react';
 
 const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard', exact: true },
-  { to: '/generate', icon: Wand2, label: 'Generate' },
-  { to: '/questions', icon: FileQuestion, label: 'Question Bank' },
-  { to: '/review', icon: ClipboardCheck, label: 'Review Queue' },
-  { to: '/papers', icon: BookOpen, label: 'Papers' },
-  { to: '/analytics', icon: BarChart3, label: 'Analytics' },
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', exact: true },
+  { to: '/dashboard/generate', icon: Wand2, label: 'Generate' },
+  { to: '/dashboard/questions', icon: FileQuestion, label: 'Question Bank' },
+  { to: '/dashboard/review', icon: ClipboardCheck, label: 'Review Queue' },
+  { to: '/dashboard/papers', icon: BookOpen, label: 'Papers' },
+  { to: '/dashboard/analytics', icon: BarChart3, label: 'Analytics' },
 ];
 
 const adminItems = [
-  { to: '/admin', icon: Settings, label: 'Admin' },
+  { to: '/dashboard/admin', icon: Settings, label: 'Admin' },
 ];
 
 export default function Layout() {
@@ -24,9 +24,12 @@ export default function Layout() {
   return (
     <div className="app-layout">
       <aside className="sidebar">
-        <div className="sidebar-logo">
-          <h2>⚡ Question Forge</h2>
-          <span>Enterprise Edition</span>
+        <div className="sidebar-logo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <img src="/logo.png" alt="Question Forge Logo" style={{ width: 32, height: 32, borderRadius: 8, objectFit: 'cover' }} />
+          <div>
+            <h2 style={{ margin: 0 }}>Question Forge</h2>
+            <span style={{ margin: 0, marginTop: 4 }}>Enterprise Edition</span>
+          </div>
         </div>
 
         <nav className="sidebar-nav">

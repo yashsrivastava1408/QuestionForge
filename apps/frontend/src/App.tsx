@@ -10,6 +10,7 @@ import ReviewPage from './pages/ReviewPage';
 import PapersPage from './pages/PapersPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import AdminPage from './pages/AdminPage';
+import LandingPage from './pages/LandingPage';
 import './index.css';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -21,9 +22,10 @@ export default function App() {
   return (
     <AuthProvider>
       <Routes>
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route
-          path="/"
+          path="/dashboard"
           element={
             <PrivateRoute>
               <Layout />

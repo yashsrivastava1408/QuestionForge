@@ -39,7 +39,7 @@ export default function AdminPage() {
   return (
     <>
       <div className="page-header">
-        <h1>⚙️ Admin Panel</h1>
+        <h1>Admin Panel</h1>
         <p>Manage users, audit logs, and integrations.</p>
       </div>
       <div className="page-body">
@@ -59,7 +59,7 @@ export default function AdminPage() {
 
         {/* Users Tab */}
         {activeTab === 'users' && (
-          <div className="card animate-fade-in">
+          <div className="card animate-fade-in animate-delay-1">
             <div className="card-title"><Users size={16} style={{ display: 'inline', marginRight: 8 }} />Team Members</div>
             <div className="table-wrapper" style={{ marginTop: 16 }}>
               <table>
@@ -88,7 +88,7 @@ export default function AdminPage() {
 
         {/* Audit Logs Tab */}
         {activeTab === 'audit' && (
-          <div className="card animate-fade-in">
+          <div className="card animate-fade-in animate-delay-2">
             <div className="card-title"><Activity size={16} style={{ display: 'inline', marginRight: 8 }} />Audit Trail</div>
             <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 16 }}>
               Every action logged for leak tracing and compliance.
@@ -116,7 +116,7 @@ export default function AdminPage() {
 
         {/* Webhooks Tab */}
         {activeTab === 'webhooks' && (
-          <div className="card animate-fade-in">
+          <div className="card animate-fade-in animate-delay-3">
             <div className="card-title"><Webhook size={16} style={{ display: 'inline', marginRight: 8 }} />Webhook Configuration</div>
             <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 20 }}>
               Auto-push approved questions to your LMS or ATS when a reviewer approves them.

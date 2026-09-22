@@ -4,6 +4,7 @@ import { prisma } from '../utils/prisma.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { exportToPdf, exportToJson } from '../services/exportService.js';
+import { uploadExportToS3 } from '../services/s3Service.js';
 import { v4 as uuidv4 } from 'uuid';
 
 export const exportRouter = Router();
@@ -50,10 +51,20 @@ exportRouter.post('/', authenticate, authorize('ADMIN', 'REVIEWER'), async (req,
       },
     });
 
-    // Store file temporarily (in production: S3/GCS pre-signed URL)
-    // For now: store in-memory and serve via /api/export/download/:token
+    // Upload to AWS S3
+    const ext = format === 'JSON' ? 'json' : 'pdf';
+    const contentType = format === 'JSON' ? 'application/json' : 'application/pdf';
+    const s3Key = `exports/${req.user!.organizationId}/${paperId}_${signedToken}.${ext}`;
+    const s3Url = await uploadExportToS3(
+      s3Key,
+      fileBuffer,
+      contentType,
+      Number(process.env.EXPORT_SIGNED_URL_EXPIRY_SECONDS ?? 300)
+    );
+
+    // Keep memory fallback in case S3 is unreachable
     (global as any).__exports = (global as any).__exports ?? {};
-    (global as any).__exports[signedToken] = { buffer: fileBuffer, format, expiresAt };
+    (global as any).__exports[signedToken] = { buffer: fileBuffer, format, expiresAt, s3Url };
 
     await prisma.auditLog.create({
       data: {
@@ -62,14 +73,14 @@ exportRouter.post('/', authenticate, authorize('ADMIN', 'REVIEWER'), async (req,
         action: 'PAPER_EXPORTED',
         entityType: 'Paper',
         entityId: paperId,
-        metadata: { format, exportRecordId: exportRecord.id },
+        metadata: { format, exportRecordId: exportRecord.id, s3Key: s3Url ? s3Key : null },
         ipAddress: req.ip,
       },
     });
 
     res.json({
       success: true,
-      downloadUrl: `/api/export/download/${signedToken}`,
+      downloadUrl: s3Url || `/api/export/download/${signedToken}`,
       expiresAt: expiresAt.toISOString(),
       message: `Download link expires in ${process.env.EXPORT_SIGNED_URL_EXPIRY_SECONDS ?? 300} seconds.`,
     });
@@ -94,6 +105,10 @@ exportRouter.get('/download/:token', async (req, res, next) => {
       where: { id: record.id },
       data: { downloadedAt: new Date() },
     });
+
+    if (fileData.s3Url) {
+      return res.redirect(fileData.s3Url);
+    }
 
     if (record.format === 'JSON') {
       res.setHeader('Content-Type', 'application/json');

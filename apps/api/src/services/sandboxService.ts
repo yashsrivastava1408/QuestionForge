@@ -16,9 +16,10 @@ const LANGUAGE_VERSION_MAP: Record<string, string> = {
 };
 
 export async function executeSandbox(req: SandboxExecutionRequest): Promise<SandboxExecutionResult> {
-  const version = req.version === 'latest'
+  const version = (!req.version || req.version === 'latest')
     ? (LANGUAGE_VERSION_MAP[req.language] ?? '*')
     : req.version;
+
 
   const start = Date.now();
 
@@ -31,15 +32,17 @@ export async function executeSandbox(req: SandboxExecutionRequest): Promise<Sand
         version,
         files: [{ content: req.code }],
         stdin: req.stdin ?? '',
-        run_timeout: req.timeoutMs ?? 10_000,
-        compile_timeout: 15_000,
+        run_timeout: Math.min(req.timeoutMs ?? 3000, 3000),
+        compile_timeout: 10_000,
         run_memory_limit: 128_000_000, // 128MB
       }),
     });
 
     if (!response.ok) {
-      throw new Error(`Piston API error: ${response.status} ${response.statusText}`);
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`Piston API error: ${response.status} ${response.statusText}: ${errBody}`);
     }
+
 
     const data = await response.json() as any;
     const executionTimeMs = Date.now() - start;

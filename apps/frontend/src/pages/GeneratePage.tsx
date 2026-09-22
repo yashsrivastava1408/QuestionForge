@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import axios from 'axios';
-import { Wand2, Zap, DollarSign, AlertCircle } from 'lucide-react';
+import { Wand2, Zap, AlertCircle } from 'lucide-react';
 
 const TOPICS = [
   'Arrays', 'Linked Lists', 'Stacks & Queues', 'Trees', 'Graphs',
@@ -9,7 +9,7 @@ const TOPICS = [
   'OOP Concepts', 'Design Patterns', 'SOLID Principles', 'System Design', 'SQL',
 ];
 
-const QUESTION_TYPES = ['DSA', 'OOPS', 'SQL', 'SYSTEM_DESIGN', 'CONCEPTUAL'];
+const QUESTION_TYPES = ['DSA', 'OOPS', 'SQL', 'SYSTEM_DESIGN', 'CONCEPTUAL', 'MCQ'];
 const LANGUAGES = ['python', 'java', 'cpp', 'javascript'];
 const STYLES = ['Google-style', 'Amazon-style', 'Service-based', 'Startup', 'Data Science'];
 const ROLE_LEVELS = ['intern', 'sde1', 'sde2', 'senior', 'lead'];
@@ -28,6 +28,7 @@ export default function GeneratePage() {
     languages: ['python', 'java'],
     companyStyle: 'Google-style',
     llmProvider: 'anthropic',
+    mcqOptionsCount: 4,
   });
   const [jobId, setJobId] = useState<string | null>(null);
 
@@ -52,7 +53,7 @@ export default function GeneratePage() {
   return (
     <>
       <div className="page-header">
-        <h1>⚡ Generation Wizard</h1>
+        <h1>Generation Wizard</h1>
         <p>Configure your assessment parameters — no prompting required.</p>
       </div>
       <div className="page-body">
@@ -67,10 +68,10 @@ export default function GeneratePage() {
         )}
 
         <div className="grid-2">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
             {/* Role & Style */}
-            <div className="card">
-              <div className="card-title">🎯 Target Profile</div>
+            <div className="card animate-fade-in animate-delay-1">
+              <div className="card-title">Target Profile</div>
               <div className="card-subtitle">Who is this assessment for?</div>
               <div className="form-group">
                 <label className="form-label">Role Level</label>
@@ -96,8 +97,8 @@ export default function GeneratePage() {
             </div>
 
             {/* Difficulty */}
-            <div className="card">
-              <div className="card-title">📊 Difficulty Distribution</div>
+            <div className="card animate-fade-in animate-delay-2">
+              <div className="card-title">Difficulty Distribution</div>
               <div className="card-subtitle">Must total exactly 100%</div>
               {(['easy', 'medium', 'hard'] as const).map(d => (
                 <div key={d} className="slider-group">
@@ -121,10 +122,10 @@ export default function GeneratePage() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
             {/* Topics */}
-            <div className="card">
-              <div className="card-title">📚 Topics</div>
+            <div className="card animate-fade-in animate-delay-2">
+              <div className="card-title">Topics</div>
               <div className="card-subtitle">Select the topics to cover</div>
               <div className="checkbox-grid">
                 {TOPICS.map(t => (
@@ -137,8 +138,8 @@ export default function GeneratePage() {
             </div>
 
             {/* Question Types */}
-            <div className="card">
-              <div className="card-title">📝 Question Types</div>
+            <div className="card animate-fade-in animate-delay-3">
+              <div className="card-title">Question Types</div>
               <div className="checkbox-grid">
                 {QUESTION_TYPES.map(t => (
                   <label key={t} className={`checkbox-chip ${config.questionTypes.includes(t) ? 'selected' : ''}`}>
@@ -147,11 +148,23 @@ export default function GeneratePage() {
                   </label>
                 ))}
               </div>
+              {config.questionTypes.includes('MCQ') && (
+                <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid var(--border-light)' }}>
+                  <div className="slider-header">
+                    <label className="form-label" style={{ margin: 0 }}>Number of MCQ Options</label>
+                    <span className="slider-value">{config.mcqOptionsCount}</span>
+                  </div>
+                  <input type="range" min={2} max={6} step={1}
+                    value={config.mcqOptionsCount}
+                    onChange={e => setConfig(c => ({ ...c, mcqOptionsCount: Number(e.target.value) }))}
+                    style={{ width: '100%', marginTop: 8 }} />
+                </div>
+              )}
             </div>
 
             {/* Languages */}
-            <div className="card">
-              <div className="card-title">💻 Languages (DSA)</div>
+            <div className="card animate-fade-in animate-delay-3">
+              <div className="card-title">Languages (DSA)</div>
               <div className="checkbox-grid">
                 {LANGUAGES.map(l => (
                   <label key={l} className={`checkbox-chip ${config.languages.includes(l) ? 'selected' : ''}`}>
@@ -163,8 +176,8 @@ export default function GeneratePage() {
             </div>
 
             {/* Quantity & Cost Estimator */}
-            <div className="card" style={{ borderColor: 'var(--color-primary)', background: 'var(--color-primary-light)' }}>
-              <div className="card-title">💰 Cost Estimator</div>
+            <div className="card animate-fade-in animate-delay-4" style={{ borderColor: 'var(--text-primary)', background: 'var(--bg-secondary)' }}>
+              <div className="card-title">Cost Estimator</div>
               <div className="form-group">
                 <label className="form-label">Total Questions</label>
                 <input className="form-input" type="number" min={1} max={100}
@@ -172,27 +185,27 @@ export default function GeneratePage() {
                   onChange={e => setConfig(c => ({ ...c, totalQuestions: Number(e.target.value) }))} />
               </div>
               <div style={{ display: 'flex', gap: 16, fontSize: 14 }}>
-                <div style={{ flex: 1, background: 'var(--color-bg-card)', padding: '12px 16px', borderRadius: 8 }}>
-                  <div style={{ color: 'var(--color-text-muted)', fontSize: 11, marginBottom: 4 }}>EST. TOKENS</div>
-                  <div style={{ fontWeight: 700, fontSize: 20, color: 'var(--color-primary)' }}>~{estimatedTokens.toLocaleString()}</div>
+                <div style={{ flex: 1, background: 'hsla(0,0%,0%,0.3)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 11, marginBottom: 4, fontWeight: 700, letterSpacing: '0.05em' }}>EST. TOKENS</div>
+                  <div style={{ fontWeight: 800, fontSize: 24, color: 'var(--text-primary)' }}>~{estimatedTokens.toLocaleString()}</div>
                 </div>
-                <div style={{ flex: 1, background: 'var(--color-bg-card)', padding: '12px 16px', borderRadius: 8 }}>
-                  <div style={{ color: 'var(--color-text-muted)', fontSize: 11, marginBottom: 4 }}>EST. COST (USD)</div>
-                  <div style={{ fontWeight: 700, fontSize: 20, color: 'var(--color-success)' }}>${estimatedCost}</div>
+                <div style={{ flex: 1, background: 'hsla(0,0%,0%,0.3)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 11, marginBottom: 4, fontWeight: 700, letterSpacing: '0.05em' }}>EST. COST (USD)</div>
+                  <div style={{ fontWeight: 800, fontSize: 24, color: 'var(--color-success)' }}>${estimatedCost}</div>
                 </div>
               </div>
 
               <button
                 className="btn btn-primary btn-lg"
-                style={{ width: '100%', justifyContent: 'center', marginTop: 20 }}
+                style={{ width: '100%', justifyContent: 'center', marginTop: 24 }}
                 onClick={() => mutation.mutate()}
                 disabled={mutation.isPending || !diffValid || config.topics.length === 0}
               >
-                {mutation.isPending ? <><span className="spinner" /> Queuing generation...</> : <><Wand2 size={16} /> Generate {config.totalQuestions} Questions</>}
+                {mutation.isPending ? <><span className="spinner" /> Queuing generation...</> : <><Wand2 size={18} /> Generate {config.totalQuestions} Questions</>}
               </button>
 
               {mutation.isError && (
-                <div className="alert alert-error" style={{ marginTop: 12 }}>
+                <div className="alert alert-error" style={{ marginTop: 16 }}>
                   {(mutation.error as any).response?.data?.error?.message ?? 'Generation failed.'}
                 </div>
               )}

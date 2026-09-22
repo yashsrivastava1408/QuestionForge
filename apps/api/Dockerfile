@@ -7,7 +7,7 @@ COPY packages/ai-orchestration/package.json ./packages/ai-orchestration/
 COPY packages/sandbox/package.json ./packages/sandbox/
 COPY packages/ingestion/package.json ./packages/ingestion/
 
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 COPY . .
 

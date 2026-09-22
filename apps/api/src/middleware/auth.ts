@@ -17,7 +17,7 @@ export function authenticate(req: Request, _res: Response, next: NextFunction) {
 
   // Allow mock token in development
   if (token === 'mock-token' && process.env.NODE_ENV !== 'production') {
-    req.user = { userId: 'mock-id', email: 'admin@demo.com', name: 'Admin Demo', role: 'ADMIN', organizationId: 'mock-org' };
+    req.user = { userId: 'mock-id', email: 'admin@demo.com', role: 'ADMIN', organizationId: 'mock-org' };
     return next();
   }
 

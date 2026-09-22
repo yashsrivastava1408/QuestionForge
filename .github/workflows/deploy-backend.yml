@@ -63,6 +63,6 @@ jobs:
             
             # 2. Build and restart the API container
             # (Requires you to manually create a .env file on the EC2 instance once)
-            sudo docker-compose -f docker-compose.prod.yml up -d --build api
+            sudo docker compose -f docker-compose.prod.yml up -d --build api
             
             echo "Deployment successful!"

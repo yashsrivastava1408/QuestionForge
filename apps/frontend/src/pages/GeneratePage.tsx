@@ -27,7 +27,7 @@ export default function GeneratePage() {
     questionTypes: ['DSA'],
     languages: ['python', 'java'],
     companyStyle: 'Google-style',
-    llmProvider: 'anthropic',
+    llmProvider: 'gemini',
     mcqOptionsCount: 4,
   });
   const [jobId, setJobId] = useState<string | null>(null);

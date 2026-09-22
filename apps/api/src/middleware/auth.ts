@@ -20,9 +20,10 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
     // Allow mock token in development
     if (token === 'mock-token' && process.env.NODE_ENV !== 'production') {
       const org = await prisma.organization.findFirst();
-      if (!org) throw new AppError('Database is completely empty! You must run the seed script.', 500);
+      const user = await prisma.user.findFirst();
+      if (!org || !user) throw new AppError('Database is completely empty! You must run the seed script.', 500);
       
-      req.user = { userId: 'mock-id', email: 'admin@demo.com', role: 'ADMIN', organizationId: org.id };
+      req.user = { userId: user.id, email: user.email, role: 'ADMIN', organizationId: org.id };
       return next();
     }
 

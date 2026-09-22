@@ -28,6 +28,9 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Generate Prisma Client
+        run: npx prisma generate --schema=packages/shared/prisma/schema.prisma
+
       - name: Verify API Build
         run: npm run build --workspace=apps/api
 

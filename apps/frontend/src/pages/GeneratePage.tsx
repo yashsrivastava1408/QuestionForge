@@ -199,7 +199,7 @@ export default function GeneratePage() {
                 className="btn btn-primary btn-lg"
                 style={{ width: '100%', justifyContent: 'center', marginTop: 24 }}
                 onClick={() => mutation.mutate()}
-                disabled={mutation.isPending || !diffValid || config.topics.length === 0}
+                disabled={mutation.isPending || !diffValid || config.topics.length === 0 || config.questionTypes.length === 0}
               >
                 {mutation.isPending ? <><span className="spinner" /> Queuing generation...</> : <><Wand2 size={18} /> Generate {config.totalQuestions} Questions</>}
               </button>

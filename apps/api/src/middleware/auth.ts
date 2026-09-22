@@ -15,6 +15,12 @@ export function authenticate(req: Request, _res: Response, next: NextFunction) {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) throw new AppError('Authentication required', 401);
 
+  // Allow mock token in development
+  if (token === 'mock-token' && process.env.NODE_ENV !== 'production') {
+    req.user = { userId: 'mock-id', email: 'admin@demo.com', name: 'Admin Demo', role: 'ADMIN', organizationId: 'mock-org' };
+    return next();
+  }
+
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET!) as AuthTokenPayload;
     req.user = payload;

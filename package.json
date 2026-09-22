@@ -1,0 +1,25 @@
+{
+  "name": "question-forge",
+  "version": "1.0.0",
+  "description": "Enterprise-grade open-source DSA & OOPS placement question generator with AI validation",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=apps/api\" \"npm run dev --workspace=apps/frontend\"",
+    "build": "npm run build --workspaces --if-present",
+    "db:generate": "npm run db:generate --workspace=packages/shared",
+    "db:migrate": "npm run db:migrate --workspace=packages/shared",
+    "db:studio": "npm run db:studio --workspace=packages/shared"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

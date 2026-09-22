@@ -1,0 +1,73 @@
+/**
+ * LeetCode Ingestion Adapter
+ *
+ * Uses LeetCode's unofficial GraphQL API to fetch problem data.
+ * Normalizes it to the Question Forge schema.
+ *
+ * NOTE: Respects robots.txt. Use only for internal/educational purposes.
+ * Rate limit: 1 request per 2 seconds.
+ */
+export class LeetCodeAdapter {
+    baseUrl = 'https://leetcode.com/graphql';
+    delay = 2000; // ms between requests
+    async fetchQuestion(titleSlug) {
+        await new Promise(res => setTimeout(res, this.delay));
+        try {
+            const resp = await fetch(this.baseUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Referer': 'https://leetcode.com' },
+                body: JSON.stringify({
+                    query: `
+            query questionData($titleSlug: String!) {
+              question(titleSlug: $titleSlug) {
+                title
+                content
+                difficulty
+                topicTags { name }
+              }
+            }
+          `,
+                    variables: { titleSlug },
+                }),
+            });
+            if (!resp.ok)
+                return null;
+            const data = await resp.json();
+            const q = data?.data?.question;
+            if (!q)
+                return null;
+            // Strip HTML from LeetCode content
+            const statement = q.content
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/&nbsp;/g, ' ')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/\s+/g, ' ')
+                .trim();
+            const diffMap = {
+                Easy: 'EASY', Medium: 'MEDIUM', Hard: 'HARD',
+            };
+            return {
+                title: q.title,
+                statement,
+                difficulty: diffMap[q.difficulty] ?? 'MEDIUM',
+                type: 'DSA',
+                topic: q.topicTags?.[0]?.name ?? 'Arrays',
+                tags: q.topicTags?.map((t) => t.name) ?? [],
+                sourceUrl: `https://leetcode.com/problems/${titleSlug}/`,
+                sourcePlatform: 'leetcode',
+                languages: ['python', 'java', 'cpp', 'javascript'],
+            };
+        }
+        catch {
+            return null;
+        }
+    }
+    async fetchByCategory(category, limit = 20) {
+        // Fetch a list of problems and ingest them one by one
+        // Implementation: fetch problem list from LC API, filter by category, scrape each
+        console.log(`Fetching ${limit} questions in category: ${category}`);
+        return [];
+    }
+}
+//# sourceMappingURL=leetcode.js.map

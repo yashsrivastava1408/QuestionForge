@@ -1,0 +1,210 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===== ENUMS =====
+
+enum QuestionType {
+  DSA
+  OOPS
+  SYSTEM_DESIGN
+  SQL
+  CONCEPTUAL
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum QuestionStatus {
+  DRAFT
+  VALIDATING
+  VALIDATED
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  FAILED
+}
+
+enum UserRole {
+  ADMIN
+  REVIEWER
+  GENERATOR
+}
+
+enum ExportFormat {
+  JSON
+  PDF_CANDIDATE
+  PDF_INTERNAL
+}
+
+enum ActionType {
+  QUESTION_GENERATED
+  QUESTION_VIEWED
+  QUESTION_EDITED
+  QUESTION_APPROVED
+  QUESTION_REJECTED
+  PAPER_EXPORTED
+  USER_LOGIN
+  USER_LOGOUT
+  API_KEY_UPDATED
+  WEBHOOK_TRIGGERED
+}
+
+// ===== MODELS =====
+
+model Organization {
+  id                   String    @id @default(cuid())
+  name                 String
+  slug                 String    @unique
+  llmApiKeysEncrypted  Json?     // Encrypted BYOK keys stored per org
+  maxQuestionsPerDay   Int       @default(200)
+  webhookUrl           String?
+  webhookSecret        String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  users     User[]
+  questions Question[]
+  papers    Paper[]
+  auditLogs AuditLog[]
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  role           UserRole @default(REVIEWER)
+  passwordHash   String?  // null if SSO-only
+  ssoProvider    String?  // "google" | "microsoft"
+  ssoId          String?
+  organizationId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  reviews      QuestionReview[]
+  auditLogs    AuditLog[]
+
+  @@unique([ssoProvider, ssoId])
+}
+
+model Question {
+  id              String         @id @default(cuid())
+  type            QuestionType
+  difficulty      Difficulty
+  topic           String
+  title           String
+  statement       String         @db.Text
+  options         Json?          // For MCQ-style OOPS questions
+  answer          String?        @db.Text
+  explanation     String?        @db.Text
+  optimalSolution String?        @db.Text
+  bruteForceSolution String?     @db.Text
+  testCases       Json?          // Array of { input, expectedOutput }
+  languages       String[]       // Supported languages for DSA
+  tags            String[]
+  sourceUrl       String?        // If scraped from LeetCode/GFG
+  sourcePlatform  String?        // "leetcode" | "gfg" | "generated"
+  status          QuestionStatus @default(DRAFT)
+  validationResult Json?         // Result from sandbox execution
+  embeddingVector Float[]        // pgvector for deduplication
+  version         Int            @default(1)
+  retryCount      Int            @default(0)
+  organizationId  String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  history      QuestionHistory[]
+  reviews      QuestionReview[]
+  papers       PaperQuestion[]
+}
+
+model QuestionHistory {
+  id         String   @id @default(cuid())
+  questionId String
+  version    Int
+  snapshot   Json     // Full question snapshot at this version
+  editedById String?
+  editNote   String?
+  createdAt  DateTime @default(now())
+
+  question Question @relation(fields: [questionId], references: [id])
+}
+
+model QuestionReview {
+  id         String   @id @default(cuid())
+  questionId String
+  reviewerId String
+  decision   String   // "APPROVED" | "REJECTED"
+  note       String?
+  createdAt  DateTime @default(now())
+
+  question Question @relation(fields: [questionId], references: [id])
+  reviewer User     @relation(fields: [reviewerId], references: [id])
+}
+
+model Paper {
+  id             String   @id @default(cuid())
+  title          String
+  organizationId String
+  config         Json     // The wizard config used to generate this paper
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  questions    PaperQuestion[]
+  exports      ExportRecord[]
+}
+
+model PaperQuestion {
+  id         String @id @default(cuid())
+  paperId    String
+  questionId String
+  order      Int
+
+  paper    Paper    @relation(fields: [paperId], references: [id])
+  question Question @relation(fields: [questionId], references: [id])
+
+  @@unique([paperId, questionId])
+}
+
+model ExportRecord {
+  id          String       @id @default(cuid())
+  paperId     String
+  format      ExportFormat
+  exportedById String
+  signedToken String?      @unique // For ephemeral URL
+  expiresAt   DateTime?
+  downloadedAt DateTime?
+  createdAt   DateTime     @default(now())
+
+  paper Paper @relation(fields: [paperId], references: [id])
+}
+
+model AuditLog {
+  id             String     @id @default(cuid())
+  organizationId String
+  userId         String?
+  action         ActionType
+  entityType     String?
+  entityId       String?
+  metadata       Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User?        @relation(fields: [userId], references: [id])
+}

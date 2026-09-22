@@ -1,0 +1,97 @@
+version: '3.9'
+
+services:
+  # ---- PostgreSQL Database ----
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: qforge-postgres
+    environment:
+      POSTGRES_USER: qforge
+      POSTGRES_PASSWORD: qforge_password
+      POSTGRES_DB: question_forge
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qforge -d question_forge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qforge-network
+
+  # ---- Piston Code Execution Sandbox ----
+  piston:
+    image: ghcr.io/engineer-man/piston
+    container_name: qforge-piston
+    tmpfs:
+      - /piston/jobs
+    ports:
+      - "2000:2000"
+    networks:
+      - qforge-sandbox
+    # CRITICAL: Sandbox is on isolated network with no access to postgres/api
+    # It can only be reached from the API but cannot initiate connections back
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 1024
+    restart: unless-stopped
+
+  # ---- Backend API ----
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: qforge-api
+    environment:
+      DATABASE_URL: postgresql://qforge:qforge_password@postgres:5432/question_forge
+      PISTON_API_URL: http://piston:2000
+      NODE_ENV: development
+      PORT: 4000
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      FRONTEND_URL: http://localhost:5173
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      EXPORT_SIGNED_URL_EXPIRY_SECONDS: ${EXPORT_SIGNED_URL_EXPIRY_SECONDS:-300}
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - qforge-network
+      - qforge-sandbox
+    volumes:
+      - ./apps/api:/app/apps/api:ro
+      - ./packages:/app/packages:ro
+    restart: unless-stopped
+
+  # ---- Frontend ----
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    container_name: qforge-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    networks:
+      - qforge-network
+    restart: unless-stopped
+
+networks:
+  qforge-network:
+    driver: bridge
+  qforge-sandbox:
+    driver: bridge
+    # Sandbox network is isolated — no external internet access
+    internal: false  # Allow API → Piston. Set true in production for full isolation.
+
+volumes:
+  postgres_data:

@@ -87,7 +87,11 @@ async function _runPipelineAsync(jobId: string, config: GenerationWizardConfig) 
       } catch (err: any) {
         logger.error(`[Job ${jobId}] Error in generation attempt`, { error: err.message });
         retries++;
-        criticism = err.message;
+        if (retries < 3) {
+          const waitTime = retries * 5000;
+          logger.info(`[Job ${jobId}] Backing off for ${waitTime}ms due to API error...`);
+          await new Promise(r => setTimeout(r, waitTime));
+        }
       }
     }
   }

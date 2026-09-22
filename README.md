@@ -1,22 +1,68 @@
 # Question Forge
 
-**Enterprise-Grade AI Assessment Question Generator with Multi-Layer Validation**
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![React](https://img.shields.io/badge/React-18-blue)
+![Node](https://img.shields.io/badge/Node-20%2B-green)
+![Prisma](https://img.shields.io/badge/Prisma-ORM-teal)
+![Docker](https://img.shields.io/badge/Docker-Enabled-blue)
+![AWS](https://img.shields.io/badge/AWS-Terraform-orange)
+![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
 
-Question Forge is an open-source platform designed for enterprise HR and university placement teams to generate, rigorously validate, and export technical interview questions (Data Structures and Algorithms, Object-Oriented Programming, System Design, SQL). It solves the core problem of AI-generated assessments: ensuring technical accuracy and avoiding ambiguous questions through an automated, multi-layer validation pipeline.
+**Enterprise-Grade AI Assessment Generation & Validation Platform**
+
+Question Forge is an open-source, multi-agent AI platform built for enterprise HR and technical recruiting teams. It automates the generation, rigorous technical validation, and secure export of interview questions (Data Structures and Algorithms, Object-Oriented Programming, System Design, SQL). By leveraging agentic debate and sandboxed code execution, Question Forge drastically reduces the factual errors and ambiguities commonly found in standard LLM outputs.
 
 ---
 
-## Latest Updates
+## Table of Contents
+- [Key Enterprise Capabilities](#key-enterprise-capabilities)
+- [Technology Stack](#technology-stack)
+- [High-Level Architecture](#high-level-architecture)
+- [Component Architecture and Data Flow](#component-architecture-and-data-flow)
+- [Environment Variables](#environment-variables)
+- [Deployment and Configuration](#deployment-and-configuration)
+- [Roadmap & Known Limitations](#roadmap--known-limitations)
+- [Contributing](#contributing)
 
-- **Ultra-Minimalist UI Overhaul**: Upgraded the frontend to a premium, pitch-black Vercel/Linear-inspired aesthetic with 1px structural borders and 150ms staggered micro-animations.
-- **"Engineering Engine" Dashboard**: Completely redesigned the dashboard based on Figma AI outputs, featuring sparkline metrics, live "Recent Generations" tables, and glassmorphic quick-action panels.
-- **LLM Provider Fallback Chain (BYOK)**: The engine now auto-detects any configured key — Anthropic Claude, OpenAI GPT-4o, or Google Gemini (free tier). Set any key in `.env` and it just works. No single provider dependency.
-- **Cross-Model Adversarial Debate**: The Adversary Agent in the validation pipeline now deliberately uses a **different LLM** than the Generator to expose blind spots the generating model would miss.
-- **Difficulty Calibration Constraints**: Strict algorithmic complexity requirements are now injected into every prompt — Easy must be O(n), Medium must use DP/two-pointers, Hard must use specialized data structures.
-- **Chain of Thought (CoT) Pre-generation**: The LLM generation pipeline now strictly requires a `<thinking>` block to reason about edge cases and constraints before outputting the final JSON, drastically improving question quality.
-- **Multi-Agent Reflection Loop**: Failed questions (e.g., failing the internal sandbox) are no longer discarded. The exact criticism and the failed draft are sent back to the LLM to self-correct in a Critic-Generator loop.
-- **MCQ Generation**: Added robust support for generating Multiple Choice Questions with configurable distractor options.
-- **Auto-Generate Assessment Papers**: Instantly draft a full assessment paper by specifying a title and desired question count, which automatically aggregates randomly selected, approved questions from your bank.
+---
+
+## Key Enterprise Capabilities
+
+1. **Multi-Agent Validation Pipeline:** 
+   Question Forge does not rely on a single LLM prompt. It utilizes an advanced **Agentic Debate** workflow powered by LangGraph. An Adversary Agent actively attempts to find factual errors or missing constraints in the generated question, while a Judge Agent forces the Generator to rewrite until the question passes strict criteria, eliminating the vast majority of hallucinations.
+
+2. **Sandboxed Code Execution:** 
+   For DSA (Data Structures and Algorithms) questions, the platform generates both an optimal solution and a brute-force solution alongside edge-case test suites. It executes this code in an isolated Docker sandbox to mathematically verify correctness, time complexity constraints, and ensure outputs match perfectly.
+
+3. **Algorithmic Deduplication via Vector Embeddings:** 
+   Every approved question is embedded into a vector space using PostgreSQL and `pgvector`. New questions are compared against the entire organizational bank using cosine similarity to minimize duplicates and prevent question leakage.
+
+4. **Secure Export & LMS Integration:** 
+   Generate full assessment papers and export them as watermarked PDFs, internal solution guides, or raw JSON. Webhooks allow seamless synchronization with existing ATS (Applicant Tracking Systems) and LMS platforms.
+
+5. **Bring Your Own Key (BYOK):** 
+   Completely provider-agnostic. Configure API keys for OpenAI (GPT-4o), Anthropic (Claude 3.5), or Google (Gemini) simply by setting the corresponding variables in your `.env` file. The engine will automatically detect and route to the configured provider.
+
+---
+
+## Technology Stack
+
+Question Forge is a modern, full-stack monorepo designed for high availability and strict security.
+
+### Core Stack
+- **Frontend**: React 18, Vite, React Router, React Query
+- **Backend**: Node.js, Express.js
+- **Database**: PostgreSQL, Prisma ORM, `pgvector` extension
+
+### AI & Orchestration
+- **Agent Framework**: LangGraph (Multi-Agent State Machines)
+- **LLM Integrations**: OpenAI SDK, Anthropic SDK, Google Gen AI SDK
+
+### Infrastructure & Security
+- **Execution Sandbox**: Piston (Isolated Docker containers with zero network access)
+- **Cloud Infrastructure**: AWS (EC2, RDS, S3)
+- **Infrastructure as Code**: Terraform
+- **CI/CD**: GitHub Actions
 
 ---
 
@@ -24,54 +70,35 @@ Question Forge is an open-source platform designed for enterprise HR and univers
 
 ```mermaid
 flowchart TD
-    subgraph Frontend [Frontend Application - React/Vite]
+    subgraph Frontend [React SPA]
         UI[User Interface]
         Wiz[Generation Wizard]
-        Rev[Review Queue]
     end
 
-    subgraph Backend [Backend API - Node.js/Express]
+    subgraph Backend [Node.js API]
         API[Express Router]
-        GenService[Generation Service]
-        ValService[Validation Service]
-        ExpService[Export & Webhook Service]
+        GenService[Generation Pipeline]
+        ValService[Validation Suite]
     end
 
-    subgraph Orchestration [AI Orchestration - LangGraph]
-        AgentGen[Generator Agent]
-        AgentAdv[Adversary Agent]
-        AgentJudge[Judge Agent]
+    subgraph AI_Orchestration [LangGraph Agents]
+        AgentGen[Generator]
+        AgentAdv[Adversary]
+        AgentJudge[Judge]
     end
 
-    subgraph Infrastructure [Data & Execution]
+    subgraph Infrastructure [Data & Sandbox]
         DB[(PostgreSQL + pgvector)]
         Sandbox[Piston Execution Sandbox]
-        LMS[External LMS/ATS]
     end
 
     UI --> API
     Wiz --> GenService
-    Rev --> ExpService
-
-    GenService <--> Orchestration
-    Orchestration --> ValService
+    GenService <--> AI_Orchestration
+    AI_Orchestration --> ValService
     ValService <--> Sandbox
     ValService <--> DB
-    ExpService --> LMS
 ```
-
----
-
-## What This Project Does
-
-Question Forge provides an end-to-end pipeline for technical question creation:
-
-1. **Parameter-Driven Generation**: Users configure target profiles (e.g., Senior Backend Engineer), topics, difficulty distribution, and programming languages. The platform estimates the token cost before generating the batch.
-2. **Deterministic Code Validation**: For Data Structures and Algorithms (DSA) questions, the system generates both an optimal solution and a brute-force solution, along with over 20 test cases. It then executes both solutions in a securely isolated Docker sandbox to ensure outputs match perfectly.
-3. **Adversarial Agent Validation**: For Object-Oriented Programming (OOPS) and conceptual questions, a LangGraph-powered adversarial debate is initiated. An Adversary Agent actively tries to find loopholes, ambiguity, or missing constraints in the generated question, while a Judge Agent makes the final determination on whether the question passes.
-4. **Vector Deduplication**: Every approved question is embedded into a vector space using PostgreSQL and `pgvector`. New questions are compared against the existing bank using cosine similarity to prevent duplicates.
-5. **Human-in-the-Loop Review**: Human reviewers are presented with a queue of only pre-validated questions. The interface highlights validation results, injected edge cases, and provides a streamlined approval process.
-6. **Secure Export and Integration**: Approved questions can be organized into Papers and exported as raw JSON, watermarked Candidate PDFs, or Internal PDFs containing solutions. Alternatively, webhooks can be configured to push questions directly to an external Learning Management System (LMS) or Applicant Tracking System (ATS).
 
 ---
 
@@ -101,7 +128,7 @@ sequenceDiagram
     end
 ```
 
-### 2. OOPS Adversarial Debate
+### 2. OOP Adversarial Debate
 
 ```mermaid
 flowchart LR
@@ -131,100 +158,78 @@ stateDiagram-v2
 
 ---
 
-## Monorepo Structure
+## Environment Variables
 
-The repository is managed using npm workspaces, cleanly separating the frontend, backend, and modular internal packages.
-
-* **apps/frontend**: React Single Page Application utilizing Vite, React Router, and React Query. Provides the user interface for all configuration and review tasks.
-* **apps/api**: Node.js and Express REST API. Manages database connections, authentication, authorization, and exposes endpoints for the frontend.
-* **packages/shared**: Contains the central Prisma schema, generated database client, and shared TypeScript types ensuring strict typing across the stack.
-* **packages/ai-orchestration**: Encapsulates LangGraph workflows, defining the state machines for multi-agent generation and validation processes.
-* **packages/sandbox**: A secure wrapper for communicating with the Piston code execution API.
-* **packages/ingestion**: Adapters for parsing and normalizing questions scraped from external sources for ingestion into the question bank.
-
----
-
-## Security Model
-
-* **Execution Isolation**: The Piston code execution sandbox runs in a dedicated Docker network. It has no inbound or outbound internet access and cannot reach the PostgreSQL database or the main API.
-* **Role-Based Access Control**: Strict enforcement of Administrator, Reviewer, and Generator roles at the API middleware layer.
-* **Audit Logging**: Immutable audit logs track every question view, edit, approval, rejection, and export event.
-* **Ephemeral Exports**: Generated PDF and JSON export URLs are signed and automatically expire after a configured duration (default 5 minutes).
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string (must include pgvector) | `postgresql://user:pass@host:5432/db` |
+| `JWT_SECRET` | Secret key for signing auth tokens | `your-secure-secret-key` |
+| `ENCRYPTION_KEY` | 64-char hex string for encrypting API keys at rest | `597d4ecba...` |
+| `OPENAI_API_KEY` | Optional: OpenAI API Key for GPT models | `sk-...` |
+| `ANTHROPIC_API_KEY` | Optional: Anthropic API Key for Claude models | `sk-ant-...` |
+| `GOOGLE_GEMINI_API_KEY` | Optional: Google Gemini API Key | `AIzaSy...` |
+| `PISTON_API_URL` | URL to the Piston code execution sandbox | `http://localhost:2000` |
 
 ---
 
 ## Deployment and Configuration
 
-### Prerequisites
-* Node.js (version 20 or higher)
-* Docker and Docker Compose
-* LLM Provider API Key (Anthropic or OpenAI)
+Question Forge is designed according to the **12-Factor App** principles, making it infrastructure-agnostic and easy to deploy on any modern cloud provider.
 
-### Running Locally
+### Local Development Setup
 
-1. Clone the repository and configure the environment:
+1. **Clone and Configure:**
 ```bash
 git clone https://github.com/your-org/question-forge.git
 cd question-forge
 cp .env.example .env
 ```
 
-2. Add your required environment variables to `.env` (e.g., `DATABASE_URL`, `JWT_SECRET`, `ANTHROPIC_API_KEY`, `ENCRYPTION_KEY`).
+2. **Add Environment Variables:** Provide your `DATABASE_URL`, `JWT_SECRET`, and chosen LLM API keys in your `.env` file.
 
-3. Start the infrastructure components (Database and Sandbox):
+3. **Start Infrastructure Services:**
 ```bash
 docker-compose up -d postgres piston
 ```
 
-4. Install dependencies and run database migrations:
+4. **Run Migrations and Install Dependencies:**
 ```bash
 npm install
 npm run db:generate
 npm run db:migrate
 ```
 
-5. Start the development servers:
+5. **Start Application:**
 ```bash
 npm run dev
 ```
+*Frontend: `http://localhost:5173` | API: `http://localhost:4000`*
 
-* Frontend Application: `http://localhost:5173`
-* Backend API: `http://localhost:4000`
+### Production Deployment (AWS / Terraform)
 
-### Deploying to Production (AWS)
+Question Forge includes native support for AWS via Terraform and GitHub Actions.
 
-Question Forge follows the **12-Factor App** design principle, meaning it is completely infrastructure-agnostic. You can deploy it to your own AWS account without altering any code.
+1. **Database:** Provision an AWS RDS PostgreSQL instance and update your `.env` with the new `DATABASE_URL`.
+2. **Execution Sandbox (Terraform):** Navigate to `infra/terraform`. Running `terraform apply` provisions a VPC, Security Groups, and an EC2 instance that automatically installs Docker and runs the Piston sandbox image via user data scripts. Once provisioned, update your `.env` with the new `PISTON_API_URL`.
+3. **Storage:** Create an AWS S3 bucket for secure PDF exports and update `S3_BUCKET_NAME` alongside your IAM credentials in `.env`.
+4. **CI/CD:** Utilize the included `.github/workflows/deploy-backend.yml` to automatically deploy API updates to your production EC2 instances on push to `main`.
 
-```mermaid
-flowchart TD
-    subgraph Vercel [Vercel Edge Network]
-        FE[React Frontend]
-    end
+---
 
-    subgraph GitHub [GitHub Actions CI/CD]
-        Code[Source Code] -->|Push to Main| Build[Action: Build & Deploy]
-    end
+## Roadmap & Known Limitations
 
-    subgraph AWS [AWS Cloud Infrastructure]
-        EC2_API[EC2 Instance: Node.js API]
-        EC2_Sandbox[EC2 Instance: Piston Sandbox]
-        RDS[(RDS: PostgreSQL)]
-        S3[S3 Bucket: PDF/JSON Exports]
-    end
-    
-    Code -->|Push to Main| FE
-    Build -->|SSH Deploy| EC2_API
-    FE <-->|HTTPS API Calls| EC2_API
-    EC2_API <-->|Execute Code| EC2_Sandbox
-    EC2_API <-->|Read/Write| RDS
-    EC2_API -->|Upload| S3
-```
+- **Roadmap:** Enterprise SSO integration (Google/Microsoft Workspace), ATS plugin integrations (Greenhouse, Lever), and multi-tenant billing support.
+- **Limitation:** The Piston sandbox currently only guarantees robust support for Python, Java, C++, and JavaScript. Additional languages require custom Docker configurations and adapters.
 
-1. **Database**: Spin up an **AWS RDS PostgreSQL** instance and update your `.env` with the new `DATABASE_URL`.
-2. **File Storage**: Create an **AWS S3 Bucket** for PDF/JSON exports and update `S3_BUCKET_NAME` and your IAM credentials in `.env`.
-3. **Sandbox**: Deploy the Piston Docker image to an **AWS EC2** instance and point `PISTON_API_URL` to it.
-4. **CI/CD Pipeline**: The repository includes a ready-to-use GitHub Actions workflow (`deploy-backend.yml`). Just add `EC2_HOST` and `EC2_SSH_KEY` to your GitHub secrets, and any push to `main` will automatically deploy the API to your EC2 instance.
-5. **Frontend**: The React frontend can be hosted for free on **Vercel**, **Netlify**, or **AWS Amplify** by simply linking your GitHub repository.
+---
+
+## Contributing
+
+We welcome contributions from the community! To get started:
+1. Fork the repository
+2. Create a new branch (`git checkout -b feature/your-feature-name`)
+3. Commit your changes and push to your branch
+4. Open a Pull Request detailing your changes
 
 ---
 

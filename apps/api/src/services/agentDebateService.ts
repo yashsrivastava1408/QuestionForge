@@ -33,7 +33,7 @@ async function runCritiquePrompt(prompt: string, preferNonProvider?: string): Pr
   }
   if (preferNonProvider !== 'gemini' && process.env.GOOGLE_GEMINI_API_KEY) {
     const client = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
-    const model = client.getGenerativeModel({ model: 'gemini-1.5-flash', generationConfig: { responseMimeType: 'application/json' } });
+    const model = client.getGenerativeModel({ model: 'gemini-1.5-flash-latest', generationConfig: { responseMimeType: 'application/json' } });
     const result = await model.generateContent(prompt);
     return result.response.text();
   }

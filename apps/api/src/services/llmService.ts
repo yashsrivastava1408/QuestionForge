@@ -171,7 +171,7 @@ class GeminiLLMClient implements LLMClient {
       : buildOOPSSystemPrompt(config, previousDraft, criticism);
 
     const model = this.client.getGenerativeModel({
-      model: 'gemini-flash-latest',
+      model: 'gemini-flash-lite-latest',
       generationConfig: { responseMimeType: 'application/json' },
     });
 

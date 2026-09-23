@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import axios from 'axios';
-import { Wand2, Zap, AlertCircle } from 'lucide-react';
+import { Wand2, AlertCircle, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 
 const TOPICS = [
   'Arrays', 'Linked Lists', 'Stacks & Queues', 'Trees', 'Graphs',
@@ -18,6 +18,15 @@ const LLM_PROVIDERS = ['anthropic', 'openai', 'gemini'];
 const TOKENS_PER_Q = 2500;
 const COST_PER_1M = 3.0;
 
+type JobState = 'waiting' | 'active' | 'completed' | 'failed' | 'delayed' | null;
+
+interface JobProgress {
+  state: JobState;
+  percent: number;
+  done: boolean;
+  failedReason?: string;
+}
+
 export default function GeneratePage() {
   const [config, setConfig] = useState({
     roleLevel: 'sde1',
@@ -31,14 +40,53 @@ export default function GeneratePage() {
     mcqOptionsCount: 4,
   });
   const [jobId, setJobId] = useState<string | null>(null);
+  const [jobProgress, setJobProgress] = useState<JobProgress>({ state: null, percent: 0, done: false });
+  const sseRef = useRef<EventSource | null>(null);
 
   const estimatedTokens = config.totalQuestions * TOKENS_PER_Q;
   const estimatedCost = ((estimatedTokens / 1_000_000) * COST_PER_1M).toFixed(4);
 
   const mutation = useMutation({
     mutationFn: () => axios.post('/api/generate', config).then(r => r.data),
-    onSuccess: (data) => setJobId(data.jobId),
+    onSuccess: (data) => {
+      setJobId(data.jobId);
+      setJobProgress({ state: 'waiting', percent: 0, done: false });
+    },
   });
+
+  // Subscribe to SSE stream whenever a new jobId is set
+  useEffect(() => {
+    if (!jobId) return;
+
+    // Close any previous stream
+    if (sseRef.current) sseRef.current.close();
+
+    const token = localStorage.getItem('token') ?? 'mock-token';
+    // EventSource doesn't support custom headers — use fetch-based SSE via URL param as workaround
+    const url = `/api/generate/status/${jobId}/stream?token=${token}`;
+    const es = new EventSource(url);
+    sseRef.current = es;
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as { state: JobState; progress: number; done?: boolean; failedReason?: string };
+        setJobProgress({
+          state: data.state,
+          percent: typeof data.progress === 'number' ? data.progress : 0,
+          done: !!data.done,
+          failedReason: data.failedReason,
+        });
+        if (data.done) es.close();
+      } catch { /* ignore parse errors */ }
+    };
+
+    es.onerror = () => {
+      // Reconnect is handled by browser; only close on final states
+      if (jobProgress.done) es.close();
+    };
+
+    return () => es.close();
+  }, [jobId]);
 
   const toggleItem = (field: 'topics' | 'questionTypes' | 'languages', value: string) => {
     setConfig(c => {
@@ -50,6 +98,12 @@ export default function GeneratePage() {
   const diffSum = config.difficultyDistribution.easy + config.difficultyDistribution.medium + config.difficultyDistribution.hard;
   const diffValid = diffSum === 100;
 
+  const startNew = () => {
+    setJobId(null);
+    setJobProgress({ state: null, percent: 0, done: false });
+    mutation.reset();
+  };
+
   return (
     <>
       <div className="page-header">
@@ -57,13 +111,66 @@ export default function GeneratePage() {
         <p>Configure your assessment parameters — no prompting required.</p>
       </div>
       <div className="page-body">
+
+        {/* ---- Job Progress Banner ---- */}
         {jobId && (
-          <div className="alert alert-success">
-            <Zap size={16} />
-            <div>
-              <strong>Generation job started!</strong> Job ID: <code>{jobId}</code><br />
-              Questions will appear in the Review Queue once validated.
-            </div>
+          <div style={{ marginBottom: 24 }}>
+            {/* State banner */}
+            {!jobProgress.done && jobProgress.state !== 'failed' && (
+              <div className="alert alert-success" style={{ alignItems: 'flex-start', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                  <strong>
+                    {jobProgress.state === 'waiting' ? 'Job queued — waiting for worker...' :
+                     jobProgress.state === 'active' ? `Generating questions...` :
+                     jobProgress.state === 'delayed' ? 'Job delayed — will retry shortly...' :
+                     'Processing...'}
+                  </strong>
+                </div>
+                {/* Progress bar */}
+                <div style={{ width: '100%' }}>
+                  <div style={{
+                    height: 8, borderRadius: 4, background: 'rgba(255,255,255,0.2)',
+                    overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${jobProgress.percent}%`,
+                      background: 'var(--color-success)',
+                      borderRadius: 4,
+                      transition: 'width 0.6s ease',
+                    }} />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 12, opacity: 0.8 }}>
+                    <span>Job ID: <code>{jobId.slice(0, 8)}…</code></span>
+                    <span>{jobProgress.percent}% complete</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {jobProgress.done && jobProgress.state === 'completed' && (
+              <div className="alert alert-success">
+                <CheckCircle2 size={16} />
+                <div>
+                  <strong>Generation complete!</strong> All questions have been validated and are ready in the Review Queue.
+                  <br />
+                  <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={startNew}>Generate another batch</button>
+                </div>
+              </div>
+            )}
+
+            {(jobProgress.done && jobProgress.state === 'failed') && (
+              <div className="alert alert-error">
+                <XCircle size={16} />
+                <div>
+                  <strong>Generation failed</strong> after all retry attempts.{' '}
+                  {jobProgress.failedReason && <span>Reason: {jobProgress.failedReason}</span>}
+                  <br />
+                  <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={startNew}>Try again</button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -199,9 +306,12 @@ export default function GeneratePage() {
                 className="btn btn-primary btn-lg"
                 style={{ width: '100%', justifyContent: 'center', marginTop: 24 }}
                 onClick={() => mutation.mutate()}
-                disabled={mutation.isPending || !diffValid || config.topics.length === 0 || config.questionTypes.length === 0}
+                disabled={mutation.isPending || !diffValid || config.topics.length === 0 || config.questionTypes.length === 0 || (!!jobId && !jobProgress.done)}
               >
-                {mutation.isPending ? <><span className="spinner" /> Queuing generation...</> : <><Wand2 size={18} /> Generate {config.totalQuestions} Questions</>}
+                {mutation.isPending
+                  ? <><span className="spinner" /> Queuing generation...</>
+                  : <><Wand2 size={18} /> Generate {config.totalQuestions} Questions</>
+                }
               </button>
 
               {mutation.isError && (
@@ -213,6 +323,10 @@ export default function GeneratePage() {
           </div>
         </div>
       </div>
+
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
     </>
   );
 }

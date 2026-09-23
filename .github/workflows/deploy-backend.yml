@@ -14,7 +14,7 @@ jobs:
   build-and-test:
     name: Build and Check API
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -38,11 +38,11 @@ jobs:
     name: Deploy to AWS EC2
     needs: build-and-test
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        
+
       - name: SSH and Deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -51,18 +51,41 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             echo "Starting deployment on EC2..."
-            
-            # 1. Clone repo if it doesn't exist, otherwise pull latest
+
+            # 1. Pull latest code
             if [ ! -d "/home/ubuntu/question-forge" ]; then
               git clone https://github.com/${{ github.repository }}.git /home/ubuntu/question-forge
             fi
-            
+
             cd /home/ubuntu/question-forge
             git fetch origin main
             git reset --hard origin/main
-            
-            # 2. Build and restart the API container
-            # (Requires you to manually create a .env file on the EC2 instance once)
-            sudo docker compose -f docker-compose.prod.yml up -d --build api
-            
-            echo "Deployment successful!"
+
+            # 2. Run database migrations BEFORE restarting the container.
+            # This prevents the new API from starting against a stale schema.
+            echo "Running database migrations..."
+            sudo docker compose -f docker-compose.prod.yml run --rm \
+              -e DATABASE_URL="$DATABASE_URL" \
+              api npx prisma migrate deploy --schema=packages/shared/prisma/schema.prisma
+            echo "Migrations complete."
+
+            # 3. Build and restart the API container (rolling update)
+            sudo docker compose -f docker-compose.prod.yml up -d --build --no-deps api
+            echo "Container restarted. Running health check..."
+
+            # 4. Post-deploy health check — verifies container actually started correctly.
+            # Retries up to 15 times (75 seconds) to allow for slow cold starts.
+            MAX_ATTEMPTS=15
+            for i in $(seq 1 $MAX_ATTEMPTS); do
+              HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:4000/health || echo "000")
+              if [ "$HTTP_STATUS" = "200" ]; then
+                echo "✅ Health check passed on attempt $i (HTTP $HTTP_STATUS)"
+                exit 0
+              fi
+              echo "Attempt $i/$MAX_ATTEMPTS: got HTTP $HTTP_STATUS — waiting 5s..."
+              sleep 5
+            done
+
+            echo "❌ Health check failed after $MAX_ATTEMPTS attempts. Rolling back..."
+            sudo docker compose -f docker-compose.prod.yml rollout api
+            exit 1

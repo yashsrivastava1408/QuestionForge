@@ -53,10 +53,18 @@ adminRouter.get('/users', authenticate, authorize('ADMIN'), async (req, res, nex
   } catch (err) { next(err); }
 });
 
-// PATCH /api/admin/users/:id/role — Change user role
+// PATCH /api/admin/users/:id/role — Change user role (org-scoped)
 adminRouter.patch('/users/:id/role', authenticate, authorize('ADMIN'), async (req, res, next) => {
   try {
     const { role } = z.object({ role: z.enum(['ADMIN', 'REVIEWER', 'GENERATOR']) }).parse(req.body);
+
+    // Verify the target user belongs to the same org as the requesting admin.
+    // Without this check, an admin could promote/demote users from other orgs.
+    const target = await prisma.user.findFirst({
+      where: { id: req.params.id, organizationId: req.user!.organizationId },
+    });
+    if (!target) throw new AppError('User not found', 404);
+
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data: { role },

@@ -61,6 +61,20 @@ questionsRouter.get('/:id', authenticate, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/**
+ * Explicit allowlist of patchable fields.
+ * Prevents mass assignment — callers cannot overwrite organizationId, status,
+ * validationResult, embeddingVector, or any other protected field via the API.
+ */
+const patchSchema = z.object({
+  title: z.string().min(1).optional(),
+  statement: z.string().min(1).optional(),
+  explanation: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  topic: z.string().optional(),
+  editNote: z.string().optional(), // not written to DB, used for history
+});
+
 // PATCH /api/questions/:id — Edit question (creates new version)
 questionsRouter.patch('/:id', authenticate, authorize('ADMIN', 'REVIEWER'), async (req, res, next) => {
   try {
@@ -69,6 +83,9 @@ questionsRouter.patch('/:id', authenticate, authorize('ADMIN', 'REVIEWER'), asyn
     });
     if (!existing) throw new AppError('Question not found', 404);
 
+    // Parse only the explicitly allowed fields — ignores anything else in the body
+    const { editNote, ...allowedData } = patchSchema.parse(req.body);
+
     // Archive current version in history
     await prisma.questionHistory.create({
       data: {
@@ -76,13 +93,13 @@ questionsRouter.patch('/:id', authenticate, authorize('ADMIN', 'REVIEWER'), asyn
         version: existing.version,
         snapshot: existing as any,
         editedById: req.user!.userId,
-        editNote: req.body.editNote,
+        editNote: editNote,
       },
     });
 
     const updated = await prisma.question.update({
       where: { id: req.params.id },
-      data: { ...req.body, version: existing.version + 1, updatedAt: new Date() },
+      data: { ...allowedData, version: existing.version + 1, updatedAt: new Date() },
     });
 
     await prisma.auditLog.create({

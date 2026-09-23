@@ -2,9 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../utils/prisma.js';
 import { authenticate, authorize } from '../middleware/auth.js';
-import { AppError } from '../middleware/errorHandler.js';
 import crypto from 'crypto';
-import fetch from 'node-fetch';
+import { enqueueWebhook } from '../queues/webhookQueue.js';
 
 export const webhooksRouter = Router();
 
@@ -19,39 +18,19 @@ webhooksRouter.post('/configure', authenticate, authorize('ADMIN'), async (req, 
       data: { webhookUrl, webhookSecret },
     });
 
-    res.json({ success: true, webhookSecret, message: 'Webhook configured. Store your secret securely — it will not be shown again.' });
+    res.json({
+      success: true,
+      webhookSecret,
+      message: 'Webhook configured. Store your secret securely — it will not be shown again.',
+    });
   } catch (err) { next(err); }
 });
 
-// Internal helper used by other services
-export async function triggerWebhook(organizationId: string, payload: object) {
-  const org = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    select: { webhookUrl: true, webhookSecret: true },
-  });
-  if (!org?.webhookUrl) return;
-
-  const body = JSON.stringify(payload);
-  const sig = crypto.createHmac('sha256', org.webhookSecret!).update(body).digest('hex');
-
-  try {
-    await fetch(org.webhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-QuestionForge-Signature': `sha256=${sig}`,
-      },
-      body,
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        organizationId,
-        action: 'WEBHOOK_TRIGGERED',
-        metadata: { url: org.webhookUrl, event: (payload as any).event },
-      },
-    });
-  } catch (err) {
-    console.error('Webhook delivery failed:', err);
-  }
+/**
+ * Enqueues a webhook delivery — does not block the caller.
+ * Delivery is handled by the dedicated webhookQueue worker with 5 retries.
+ * Replaces the old synchronous fetch() call inside the generation pipeline.
+ */
+export async function triggerWebhook(organizationId: string, payload: object): Promise<void> {
+  await enqueueWebhook(organizationId, payload);
 }

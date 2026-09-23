@@ -110,8 +110,8 @@ model Question {
   options         Json?          // For MCQ-style OOPS questions
   answer          String?        @db.Text
   explanation     String?        @db.Text
-  optimalSolution String?        @db.Text
-  bruteForceSolution String?     @db.Text
+  optimalSolution    Json?          // { python: "...", java: "...", cpp: "...", javascript: "..." }
+  bruteForceSolution Json?          // { python: "...", java: "...", cpp: "...", javascript: "..." }
   testCases       Json?          // Array of { input, expectedOutput }
   languages       String[]       // Supported languages for DSA
   tags            String[]
@@ -130,6 +130,12 @@ model Question {
   history      QuestionHistory[]
   reviews      QuestionReview[]
   papers       PaperQuestion[]
+
+  // Composite indexes for the most common filtered queries
+  // (status-filtered review queue, type+difficulty generation reports, time-series feeds)
+  @@index([organizationId, status])
+  @@index([organizationId, type, difficulty])
+  @@index([organizationId, createdAt])
 }
 
 model QuestionHistory {
@@ -208,4 +214,8 @@ model AuditLog {
 
   organization Organization @relation(fields: [organizationId], references: [id])
   user         User?        @relation(fields: [userId], references: [id])
+
+  // Indexes for audit log pagination and action filtering
+  @@index([organizationId, createdAt])
+  @@index([organizationId, action])
 }

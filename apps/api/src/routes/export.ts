@@ -3,9 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../utils/prisma.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { exportToPdf, exportToJson } from '../services/exportService.js';
-import { uploadExportToS3 } from '../services/s3Service.js';
-import { v4 as uuidv4 } from 'uuid';
+import { exportToPdf, exportToJson, uploadAndGetExportUrl } from '../services/exportService.js';
 
 export const exportRouter = Router();
 
@@ -15,7 +13,7 @@ const exportSchema = z.object({
   watermarkText: z.string().optional(),
 });
 
-// POST /api/export — Generate export and return ephemeral signed URL
+// POST /api/export — Generate export, upload to S3, return ephemeral signed URL
 exportRouter.post('/', authenticate, authorize('ADMIN', 'REVIEWER'), async (req, res, next) => {
   try {
     const { paperId, format, watermarkText } = exportSchema.parse(req.body);
@@ -29,8 +27,8 @@ exportRouter.post('/', authenticate, authorize('ADMIN', 'REVIEWER'), async (req,
     });
     if (!paper) throw new AppError('Paper not found', 404);
 
-    const signedToken = uuidv4();
-    const expiresAt = new Date(Date.now() + Number(process.env.EXPORT_SIGNED_URL_EXPIRY_SECONDS ?? 300) * 1000);
+    const expiresInSeconds = Number(process.env.EXPORT_SIGNED_URL_EXPIRY_SECONDS ?? 300);
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
     // Generate the export file
     let fileBuffer: Buffer;
@@ -40,31 +38,27 @@ exportRouter.post('/', authenticate, authorize('ADMIN', 'REVIEWER'), async (req,
       fileBuffer = await exportToPdf(paper as any, format, watermarkText ?? paper.organization.name);
     }
 
-    // Store export record with signed token
+    const ext = format === 'JSON' ? 'json' : 'pdf';
+    const contentType = format === 'JSON' ? 'application/json' : 'application/pdf';
+
+    // Upload to S3 — throws AppError 503 if S3 is not configured (no silent memory fallback)
+    const downloadUrl = await uploadAndGetExportUrl(
+      fileBuffer,
+      contentType,
+      req.user!.organizationId,
+      paperId,
+      ext,
+      expiresInSeconds
+    );
+
     const exportRecord = await prisma.exportRecord.create({
       data: {
         paperId,
         format,
         exportedById: req.user!.userId,
-        signedToken,
         expiresAt,
       },
     });
-
-    // Upload to AWS S3
-    const ext = format === 'JSON' ? 'json' : 'pdf';
-    const contentType = format === 'JSON' ? 'application/json' : 'application/pdf';
-    const s3Key = `exports/${req.user!.organizationId}/${paperId}_${signedToken}.${ext}`;
-    const s3Url = await uploadExportToS3(
-      s3Key,
-      fileBuffer,
-      contentType,
-      Number(process.env.EXPORT_SIGNED_URL_EXPIRY_SECONDS ?? 300)
-    );
-
-    // Keep memory fallback in case S3 is unreachable
-    (global as any).__exports = (global as any).__exports ?? {};
-    (global as any).__exports[signedToken] = { buffer: fileBuffer, format, expiresAt, s3Url };
 
     await prisma.auditLog.create({
       data: {
@@ -73,51 +67,16 @@ exportRouter.post('/', authenticate, authorize('ADMIN', 'REVIEWER'), async (req,
         action: 'PAPER_EXPORTED',
         entityType: 'Paper',
         entityId: paperId,
-        metadata: { format, exportRecordId: exportRecord.id, s3Key: s3Url ? s3Key : null },
+        metadata: { format, exportRecordId: exportRecord.id },
         ipAddress: req.ip,
       },
     });
 
     res.json({
       success: true,
-      downloadUrl: s3Url || `/api/export/download/${signedToken}`,
+      downloadUrl,
       expiresAt: expiresAt.toISOString(),
-      message: `Download link expires in ${process.env.EXPORT_SIGNED_URL_EXPIRY_SECONDS ?? 300} seconds.`,
+      message: `Download link expires in ${expiresInSeconds} seconds.`,
     });
-  } catch (err) { next(err); }
-});
-
-// GET /api/export/download/:token — Download the exported file
-exportRouter.get('/download/:token', async (req, res, next) => {
-  try {
-    const record = await prisma.exportRecord.findUnique({
-      where: { signedToken: req.params.token },
-    });
-    if (!record) throw new AppError('Invalid download link', 404);
-    if (record.expiresAt && new Date() > record.expiresAt) {
-      throw new AppError('Download link has expired', 410);
-    }
-
-    const fileData = (global as any).__exports?.[req.params.token];
-    if (!fileData) throw new AppError('File not found or expired', 404);
-
-    await prisma.exportRecord.update({
-      where: { id: record.id },
-      data: { downloadedAt: new Date() },
-    });
-
-    if (fileData.s3Url) {
-      return res.redirect(fileData.s3Url);
-    }
-
-    if (record.format === 'JSON') {
-      res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', 'attachment; filename="paper.json"');
-    } else {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="paper_${record.format.toLowerCase()}.pdf"`);
-    }
-
-    res.send(fileData.buffer);
   } catch (err) { next(err); }
 });

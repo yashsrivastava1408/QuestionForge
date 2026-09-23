@@ -2,9 +2,11 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
+import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../utils/prisma.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { authenticate } from '../middleware/auth.js';
+import { redisClient } from '../utils/redis.js';
 
 export const authRouter = Router();
 
@@ -37,13 +39,14 @@ authRouter.post('/login', async (req, res, next) => {
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) throw new AppError('Invalid credentials', 401);
 
+    // Include a unique JWT ID (jti) so this specific token can be revoked on logout
+    const jti = uuidv4();
     const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role, organizationId: user.organizationId },
+      { userId: user.id, email: user.email, role: user.role, organizationId: user.organizationId, jti },
       process.env.JWT_SECRET!,
       { expiresIn: '24h' }
     );
 
-    // Audit log
     await prisma.auditLog.create({
       data: {
         organizationId: org.id,
@@ -73,13 +76,42 @@ authRouter.post('/register', async (req, res, next) => {
       data: { email, passwordHash, name, role: role ?? 'REVIEWER', organizationId: org.id },
     });
 
+    const jti = uuidv4();
     const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role, organizationId: user.organizationId },
+      { userId: user.id, email: user.email, role: user.role, organizationId: user.organizationId, jti },
       process.env.JWT_SECRET!,
       { expiresIn: '24h' }
     );
 
     res.status(201).json({ success: true, token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  } catch (err) { next(err); }
+});
+
+// POST /api/auth/logout — Revoke current token so it can't be reused
+authRouter.post('/logout', authenticate, async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (token) {
+      const payload = jwt.decode(token) as any;
+      if (payload?.jti && payload?.exp) {
+        // Store the revoked JTI in Redis until the token would have expired anyway
+        const ttlSeconds = payload.exp - Math.floor(Date.now() / 1000);
+        if (ttlSeconds > 0) {
+          await redisClient.set(`jwt:revoked:${payload.jti}`, '1', 'EX', ttlSeconds);
+        }
+      }
+    }
+
+    await prisma.auditLog.create({
+      data: {
+        organizationId: req.user!.organizationId,
+        userId: req.user!.userId,
+        action: 'USER_LOGOUT',
+        ipAddress: req.ip,
+      },
+    });
+
+    res.json({ success: true, message: 'Logged out successfully.' });
   } catch (err) { next(err); }
 });
 

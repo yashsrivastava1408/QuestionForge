@@ -1,16 +1,52 @@
 version: '3.9'
 
+# Production overrides — extend docker-compose.yml via:
+#   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This file assumes Redis and PostgreSQL are externally managed (e.g. AWS RDS + ElastiCache).
+# Only the API and Frontend containers are deployed here.
+
 services:
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    container_name: qforge-api-prod
     env_file:
       - .env
     ports:
       - "4000:4000"
     restart: always
-    # We use network_mode: host here for extreme simplicity on EC2, 
-    # so the API can talk to localhost:2000 (Piston Sandbox) exactly as it does locally
-    network_mode: host
+    deploy:
+      replicas: 2          # Run 2 API replicas — safe now that state is in Redis/PG
+      update_config:
+        parallelism: 1     # Rolling deploy — update one replica at a time
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    ports:
+      - "80:80"
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

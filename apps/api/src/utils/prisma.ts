@@ -6,20 +6,41 @@ declare global {
   var __prisma: PrismaClient | undefined;
 }
 
-// Singleton pattern — prevents creating multiple DB connections in dev hot-reload
-export const prisma = globalThis.__prisma ?? new PrismaClient({
-  log: process.env.NODE_ENV === 'development'
-    ? ['query', 'error', 'warn']
-    : ['error'],
-});
+/**
+ * Singleton Prisma client with explicit connection pool configuration.
+ *
+ * connection_limit is set per-process (not per-replica). With 4 API replicas,
+ * total connections = 4 × connection_limit. Keep this low when using a
+ * shared RDS instance (default: 5 per replica).
+ * Override via DATABASE_URL query param: ?connection_limit=5&pool_timeout=20
+ *
+ * In production, consider adding PgBouncer in front of RDS and setting
+ * pgbouncer=true in the connection string.
+ */
+export const prisma =
+  globalThis.__prisma ??
+  new PrismaClient({
+    log:
+      process.env.NODE_ENV === 'development'
+        ? ['query', 'error', 'warn']
+        : ['error'],
+    datasources: {
+      db: {
+        url: process.env.DATABASE_URL,
+      },
+    },
+  });
 
 if (process.env.NODE_ENV !== 'production') {
   globalThis.__prisma = prisma;
 }
 
-prisma.$connect().then(() => {
-  logger.info('✅ Database connected');
-}).catch((err: Error) => {
-  logger.error('❌ Database connection failed', { error: err.message });
-  process.exit(1);
-});
+prisma
+  .$connect()
+  .then(() => {
+    logger.info('✅ Database connected');
+  })
+  .catch((err: Error) => {
+    logger.error('❌ Database connection failed', { error: err.message });
+    process.exit(1);
+  });

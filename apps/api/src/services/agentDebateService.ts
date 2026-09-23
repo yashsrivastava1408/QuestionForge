@@ -3,44 +3,59 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../utils/logger.js';
-import { getLLMClient, getAdversaryLLMClient } from './llmService.js';
 
 interface DebateResult {
   passed: boolean;
   report: string;
 }
 
-// Helper: run a critique prompt against any available model
+/**
+ * Module-level SDK singletons — constructed once per process, not per debate call.
+ * These clients are stateless and safe to share across concurrent invocations.
+ * Avoids the overhead of constructing SDK objects (which do auth validation,
+ * header setup, etc.) for every single MCQ debate round.
+ */
+const _openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
+
+const _anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
+
+const _gemini = process.env.GOOGLE_GEMINI_API_KEY
+  ? new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY)
+  : null;
+
+// Helper: run a critique prompt using the best available cross-model client
 async function runCritiquePrompt(prompt: string, preferNonProvider?: string): Promise<string> {
-  // Cross-model: try to use a different model from the one specified
-  if (preferNonProvider !== 'openai' && process.env.OPENAI_API_KEY) {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const resp = await client.chat.completions.create({
+  if (preferNonProvider !== 'openai' && _openai) {
+    const resp = await _openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
     });
     return resp.choices[0].message.content ?? '{}';
   }
-  if (preferNonProvider !== 'anthropic' && process.env.ANTHROPIC_API_KEY) {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const resp = await client.messages.create({
+  if (preferNonProvider !== 'anthropic' && _anthropic) {
+    const resp = await _anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });
     return resp.content[0].type === 'text' ? resp.content[0].text : '{}';
   }
-  if (preferNonProvider !== 'gemini' && process.env.GOOGLE_GEMINI_API_KEY) {
-    const client = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
-    const model = client.getGenerativeModel({ model: 'gemini-flash-lite-latest', generationConfig: { responseMimeType: 'application/json' } });
+  if (preferNonProvider !== 'gemini' && _gemini) {
+    const model = _gemini.getGenerativeModel({
+      model: 'gemini-flash-lite-latest',
+      generationConfig: { responseMimeType: 'application/json' },
+    });
     const result = await model.generateContent(prompt);
     return result.response.text();
   }
   // Fallback: use any available key
-  if (process.env.ANTHROPIC_API_KEY) {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const resp = await client.messages.create({
+  if (_anthropic) {
+    const resp = await _anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
@@ -68,7 +83,6 @@ Respond ONLY with valid JSON: {"foundIssue": true or false, "issue": "describe i
 
   let adversaryParsed: { foundIssue: boolean; issue: string | null; severity?: string } = { foundIssue: false, issue: null };
   try {
-    // Cross-model: adversary uses a DIFFERENT model than the generator (Anthropic → OpenAI or vice versa)
     const adversaryText = await runCritiquePrompt(adversaryPrompt, 'anthropic');
     adversaryParsed = JSON.parse(adversaryText);
   } catch (e) {
@@ -104,5 +118,3 @@ Respond ONLY with valid JSON: {"decision": "PASS" or "FAIL", "reasoning": "one c
   logger.info(`[AgentDebate] Result for Q ${question.id}: ${passed ? 'PASS' : 'FAIL'}`);
   return { passed, report };
 }
-
-

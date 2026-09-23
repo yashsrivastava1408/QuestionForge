@@ -1,4 +1,5 @@
 import type { GenerationWizardConfig } from '@question-forge/shared';
+import type { Job } from 'bullmq';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../utils/prisma.js';
 import { logger } from '../utils/logger.js';
@@ -6,22 +7,41 @@ import { runValidationPipeline } from './validationService.js';
 import { checkDuplicate } from './deduplicationService.js';
 import { getLLMClient } from './llmService.js';
 import { triggerWebhook } from '../routes/webhooks.js';
+import { generationQueue } from '../queues/generationQueue.js';
 
-// Builds jobs in the background — doesn't block the HTTP response
+/**
+ * Enqueues a generation job into BullMQ.
+ * Returns immediately with a jobId — the work happens in the background worker.
+ * Jobs are persisted in Redis and survive server restarts.
+ */
 export async function runGenerationPipeline(config: GenerationWizardConfig): Promise<string> {
   const jobId = uuidv4();
-  // Fire and forget — runs asynchronously
-  _runPipelineAsync(jobId, config).catch((err: Error) =>
-    logger.error('Generation pipeline error', { jobId, error: err.message })
+  await generationQueue.add(
+    'generate',
+    { jobId, config },
+    {
+      jobId, // Use our own jobId so the status endpoint can look it up directly
+    }
   );
+  logger.info(`[Queue] Enqueued generation job ${jobId} for org ${config.organizationId}`);
   return jobId;
 }
 
-async function _runPipelineAsync(jobId: string, config: GenerationWizardConfig) {
+/**
+ * The actual pipeline logic — called by the BullMQ worker.
+ * Exported so the worker can import and invoke it.
+ * The optional `job` parameter allows us to update BullMQ job progress.
+ */
+export async function _runPipelineAsync(
+  jobId: string,
+  config: GenerationWizardConfig,
+  job?: Job
+): Promise<void> {
   logger.info(`[Job ${jobId}] Starting generation for org ${config.organizationId}`);
   const llm = getLLMClient(config.llmProvider, config.organizationId);
-
   const difficultyPlan = buildDifficultyPlan(config);
+  const total = difficultyPlan.length;
+  let completed = 0;
 
   for (const { difficulty, type } of difficultyPlan) {
     let retries = 0;
@@ -32,19 +52,24 @@ async function _runPipelineAsync(jobId: string, config: GenerationWizardConfig) 
     while (retries < 3 && !success) {
       try {
         logger.info(`[Job ${jobId}] Generating ${type} / ${difficulty} (attempt ${retries + 1})`);
-        const rawQuestion = await llm.generateQuestion({ ...config, difficulty, questionType: type }, previousDraft, criticism);
+        const rawQuestion = await llm.generateQuestion(
+          { ...config, difficulty, questionType: type },
+          previousDraft,
+          criticism
+        );
 
         // Deduplication check
         const isDuplicate = await checkDuplicate(rawQuestion.statement, config.organizationId);
         if (isDuplicate) {
           logger.warn(`[Job ${jobId}] Duplicate detected, skipping.`);
           retries++;
-          criticism = "Question generated was too similar to an existing question in the bank. You must generate a completely novel question.";
+          criticism =
+            'Question generated was too similar to an existing question in the bank. You must generate a completely novel question.';
           previousDraft = rawQuestion;
           continue;
         }
 
-        // Save as DRAFT
+        // Save as VALIDATING
         const saved = await prisma.question.create({
           data: {
             ...rawQuestion,
@@ -81,7 +106,7 @@ async function _runPipelineAsync(jobId: string, config: GenerationWizardConfig) 
           } else {
             logger.info(`[Job ${jobId}] Validation failed. Retrying with reflection.`);
             previousDraft = rawQuestion;
-            criticism = validationResult.details || "Question failed internal validation suite.";
+            criticism = validationResult.details || 'Question failed internal validation suite.';
           }
         }
       } catch (err: any) {
@@ -90,9 +115,15 @@ async function _runPipelineAsync(jobId: string, config: GenerationWizardConfig) 
         if (retries < 3) {
           const waitTime = retries * 5000;
           logger.info(`[Job ${jobId}] Backing off for ${waitTime}ms due to API error...`);
-          await new Promise(r => setTimeout(r, waitTime));
+          await new Promise((r) => setTimeout(r, waitTime));
         }
       }
+    }
+
+    // Update BullMQ job progress so the status endpoint can report it
+    completed++;
+    if (job) {
+      await job.updateProgress(Math.round((completed / total) * 100));
     }
   }
 
@@ -105,7 +136,6 @@ function buildDifficultyPlan(config: GenerationWizardConfig) {
   const easyCount = Math.round(config.totalQuestions * (easy / 100));
   const mediumCount = Math.round(config.totalQuestions * (medium / 100));
   const hardCount = config.totalQuestions - easyCount - mediumCount;
-
   const typeCycle = [...config.questionTypes];
 
   const addItems = (count: number, difficulty: string) => {

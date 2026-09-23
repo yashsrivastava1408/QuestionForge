@@ -26,8 +26,8 @@ flowchart TD
         W_Hook["webhookWorker\n- Concurrency: 10\n- Signs HMAC-SHA256\n- 5-Tier Exponential Backoff"]
     end
 
-    GenRoute -->|add(jobData)| Q_Gen
-    ReviewRoute & ExportRoute -->|enqueueWebhook(payload)| Q_Hook
+    GenRoute -->|Enqueue Generation Job| Q_Gen
+    ReviewRoute & ExportRoute -->|Enqueue Webhook Job| Q_Hook
 
     Q_Gen -->|Fetch next job| W_Gen
     Q_Hook -->|Fetch next job| W_Hook

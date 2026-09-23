@@ -61,7 +61,7 @@ flowchart TD
     Client -->|HTTPS / WSS| ALB
     ALB --> API_1 & API_2 & API_N
 
-    API_1 & API_2 & API_N -->|Fast Job Enqueue < 5ms| Redis
+    API_1 & API_2 & API_N -->|Fast Job Enqueue sub-5ms| Redis
     API_1 & API_2 & API_N -->|Query Relational Data| Postgres
     API_1 & API_2 & API_N -->|Read/Write Presigned URLs| S3
 

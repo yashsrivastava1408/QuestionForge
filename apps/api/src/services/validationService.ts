@@ -92,6 +92,12 @@ async function _validateDSA(
     }
   }
 
+  if (tasks.length === 0) {
+    result.passed = false;
+    result.details = 'No executable solutions found for configured languages.';
+    return result;
+  }
+
   // Wait for every execution task concurrently
   const results = await Promise.all(tasks.map((t) => t.promise));
 

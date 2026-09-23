@@ -15,7 +15,7 @@ import { webhooksRouter } from './routes/webhooks.js';
 import { adminRouter } from './routes/admin.js';
 import { logger } from './utils/logger.js';
 import { prisma } from './utils/prisma.js';
-import { connectRedis } from './utils/redis.js';
+import { connectRedis, redisClient } from './utils/redis.js';
 import { startGenerationWorker } from './queues/generationWorker.js';
 import { startWebhookWorker } from './queues/webhookQueue.js';
 
@@ -56,16 +56,53 @@ app.use(express.urlencoded({ extended: true }));
 // ---- Logging ----
 app.use(requestLogger);
 
+// ---- Health & Readiness Probes (mounted before rate limiting) ----
+const livenessHandler = (_req: express.Request, res: express.Response) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
+};
+
+const readinessHandler = async (_req: express.Request, res: express.Response) => {
+  let dbHealthy = false;
+  let redisHealthy = false;
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    dbHealthy = true;
+  } catch (err: any) {
+    logger.error('[Health] DB ping failed', { error: err.message });
+  }
+
+  try {
+    const pong = await redisClient.ping();
+    redisHealthy = pong === 'PONG';
+  } catch (err: any) {
+    logger.error('[Health] Redis ping failed', { error: err.message });
+  }
+
+  const isReady = dbHealthy && redisHealthy;
+  const status = isReady ? 'ready' : 'degraded';
+
+  res.status(isReady ? 200 : 503).json({
+    status,
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    services: {
+      database: dbHealthy ? 'healthy' : 'unreachable',
+      redis: redisHealthy ? 'healthy' : 'unreachable',
+    },
+  });
+};
+
+app.get('/health', livenessHandler);
+app.get('/api/health', livenessHandler);
+app.get('/health/ready', readinessHandler);
+app.get('/api/health/ready', readinessHandler);
+
 // ---- Global Rate Limiter (Redis-backed, works across replicas) ----
 app.use(createRateLimiter({
   windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 900_000,
   max: Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
 }));
-
-// ---- Health Check ----
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
-});
 
 // ---- API Routes ----
 app.use('/api/auth', authRouter);
@@ -85,10 +122,24 @@ async function bootstrap() {
   // Connect Redis before starting so the queue and rate limiter are ready
   await connectRedis();
 
-  // Start the BullMQ worker in the same process.
-  // In production with high load, split this into a separate worker process.
-  const worker = startGenerationWorker();
-  const webhookWorker = startWebhookWorker();
+  // Dual-mode worker support:
+  // - In development: runs embedded workers by default for single-terminal convenience.
+  // - In production: set ENABLE_EMBEDDED_WORKERS=false to run pure stateless HTTP,
+  //   while the dedicated worker container runs apps/api/src/worker.ts.
+  const shouldRunEmbeddedWorkers =
+    process.env.ENABLE_EMBEDDED_WORKERS === 'true' ||
+    (process.env.NODE_ENV !== 'production' && process.env.ENABLE_EMBEDDED_WORKERS !== 'false');
+
+  let worker: ReturnType<typeof startGenerationWorker> | null = null;
+  let webhookWorker: ReturnType<typeof startWebhookWorker> | null = null;
+
+  if (shouldRunEmbeddedWorkers) {
+    logger.info('[API] Booting embedded BullMQ queue workers...');
+    worker = startGenerationWorker();
+    webhookWorker = startWebhookWorker();
+  } else {
+    logger.info('[API] Running in stateless HTTP-only mode (worker process decoupled).');
+  }
 
   const server = app.listen(PORT, () => {
     logger.info(`🚀 Question Forge API running on http://localhost:${PORT}`);
@@ -97,15 +148,18 @@ async function bootstrap() {
   /**
    * Graceful shutdown — handle SIGTERM (Docker stop) and SIGINT (Ctrl+C).
    * 1. Stop accepting new HTTP requests
-   * 2. Let the BullMQ worker finish its current job
+   * 2. Let embedded BullMQ workers drain if active
    * 3. Disconnect from DB and Redis
    */
   const shutdown = async (signal: string) => {
     logger.info(`[Shutdown] Received ${signal}. Gracefully shutting down...`);
 
     server.close(async () => {
-      logger.info('[Shutdown] HTTP server closed. Draining workers...');
-      await Promise.all([worker.close(), webhookWorker.close()]);
+      logger.info('[Shutdown] HTTP server closed. Cleaning up...');
+      if (worker && webhookWorker) {
+        logger.info('[Shutdown] Draining embedded workers...');
+        await Promise.all([worker.close(), webhookWorker.close()]);
+      }
       await prisma.$disconnect();
       logger.info('[Shutdown] All connections closed. Exiting.');
       process.exit(0);

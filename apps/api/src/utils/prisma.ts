@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../utils/logger.js';
 
@@ -13,10 +14,11 @@ declare global {
  * total connections = 4 × connection_limit. Keep this low when using a
  * shared RDS instance (default: 5 per replica).
  * Override via DATABASE_URL query param: ?connection_limit=5&pool_timeout=20
- *
- * In production, consider adding PgBouncer in front of RDS and setting
- * pgbouncer=true in the connection string.
  */
+const DATABASE_URL =
+  process.env.DATABASE_URL ??
+  'postgresql://qforge:qforge_password@localhost:5432/question_forge';
+
 export const prisma =
   globalThis.__prisma ??
   new PrismaClient({
@@ -26,7 +28,7 @@ export const prisma =
         : ['error'],
     datasources: {
       db: {
-        url: process.env.DATABASE_URL,
+        url: DATABASE_URL,
       },
     },
   });
@@ -34,13 +36,3 @@ export const prisma =
 if (process.env.NODE_ENV !== 'production') {
   globalThis.__prisma = prisma;
 }
-
-prisma
-  .$connect()
-  .then(() => {
-    logger.info('✅ Database connected');
-  })
-  .catch((err: Error) => {
-    logger.error('❌ Database connection failed', { error: err.message });
-    process.exit(1);
-  });

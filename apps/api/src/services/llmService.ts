@@ -182,6 +182,20 @@ class GeminiLLMClient implements LLMClient {
   }
 }
 
+const clientCache = new Map<string, LLMClient>();
+
+function getOrCreateClient(provider: 'anthropic' | 'openai' | 'gemini', apiKey: string): LLMClient {
+  const cacheKey = `${provider}:${apiKey}`;
+  let client = clientCache.get(cacheKey);
+  if (!client) {
+    if (provider === 'anthropic') client = new AnthropicLLMClient(apiKey);
+    else if (provider === 'openai') client = new OpenAILLMClient(apiKey);
+    else client = new GeminiLLMClient(apiKey);
+    clientCache.set(cacheKey, client);
+  }
+  return client;
+}
+
 /**
  * Returns the best available LLM client based on configured API keys.
  * Priority: Anthropic → OpenAI → Gemini
@@ -192,32 +206,28 @@ export function getLLMClient(preferredProvider: string, _organizationId: string)
   if (preferredProvider === 'anthropic') {
     const key = process.env.ANTHROPIC_API_KEY;
     if (!key) throw new AppError('ANTHROPIC_API_KEY not configured', 400);
-    return new AnthropicLLMClient(key);
+    return getOrCreateClient('anthropic', key);
   }
   if (preferredProvider === 'openai') {
     const key = process.env.OPENAI_API_KEY;
     if (!key) throw new AppError('OPENAI_API_KEY not configured', 400);
-    return new OpenAILLMClient(key);
+    return getOrCreateClient('openai', key);
   }
   if (preferredProvider === 'gemini') {
     const key = process.env.GOOGLE_GEMINI_API_KEY;
     if (!key) throw new AppError('GOOGLE_GEMINI_API_KEY not configured', 400);
-    return new GeminiLLMClient(key);
+    return getOrCreateClient('gemini', key);
   }
 
   // Auto-detect: fall through to best available key
-  logger.info('[LLM] Auto-detecting best available provider...');
   if (process.env.ANTHROPIC_API_KEY) {
-    logger.info('[LLM] Using Anthropic Claude 3.5 Sonnet');
-    return new AnthropicLLMClient(process.env.ANTHROPIC_API_KEY);
+    return getOrCreateClient('anthropic', process.env.ANTHROPIC_API_KEY);
   }
   if (process.env.OPENAI_API_KEY) {
-    logger.info('[LLM] Falling back to OpenAI GPT-4o');
-    return new OpenAILLMClient(process.env.OPENAI_API_KEY);
+    return getOrCreateClient('openai', process.env.OPENAI_API_KEY);
   }
   if (process.env.GOOGLE_GEMINI_API_KEY) {
-    logger.info('[LLM] Falling back to Google Gemini 1.5 Flash (free tier)');
-    return new GeminiLLMClient(process.env.GOOGLE_GEMINI_API_KEY);
+    return getOrCreateClient('gemini', process.env.GOOGLE_GEMINI_API_KEY);
   }
 
   throw new AppError('No LLM API key configured. Please set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_GEMINI_API_KEY in your .env file.', 400);
@@ -230,16 +240,13 @@ export function getLLMClient(preferredProvider: string, _organizationId: string)
 export function getAdversaryLLMClient(generatorProvider: string): LLMClient {
   // Adversary should be a DIFFERENT model than the generator
   if (generatorProvider !== 'openai' && process.env.OPENAI_API_KEY) {
-    logger.info('[LLM] Adversary using OpenAI GPT-4o (cross-model critique)');
-    return new OpenAILLMClient(process.env.OPENAI_API_KEY);
+    return getOrCreateClient('openai', process.env.OPENAI_API_KEY);
   }
   if (generatorProvider !== 'anthropic' && process.env.ANTHROPIC_API_KEY) {
-    logger.info('[LLM] Adversary using Anthropic Claude 3.5 Sonnet (cross-model critique)');
-    return new AnthropicLLMClient(process.env.ANTHROPIC_API_KEY);
+    return getOrCreateClient('anthropic', process.env.ANTHROPIC_API_KEY);
   }
   if (generatorProvider !== 'gemini' && process.env.GOOGLE_GEMINI_API_KEY) {
-    logger.info('[LLM] Adversary using Google Gemini (cross-model critique)');
-    return new GeminiLLMClient(process.env.GOOGLE_GEMINI_API_KEY);
+    return getOrCreateClient('gemini', process.env.GOOGLE_GEMINI_API_KEY);
   }
   // Fallback: same model (better than nothing)
   logger.warn('[LLM] Only one LLM provider configured. Cross-model debate unavailable, using same provider.');

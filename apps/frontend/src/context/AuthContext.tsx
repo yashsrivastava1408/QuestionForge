@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import axios from 'axios';
 
 interface AuthUser {
@@ -12,24 +12,47 @@ interface AuthContextType {
   token: string | null;
   user: AuthUser | null;
   login: (email: string, password: string, orgSlug: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => 'mock-token');
-  const [user, setUser] = useState<AuthUser | null>(() => ({
-    id: 'mock-id',
-    email: 'admin@demo.com',
-    name: 'Admin Demo',
-    role: 'ADMIN'
-  }));
+  const [token, setToken] = useState<string | null>(() => {
+    return localStorage.getItem('qf_token') ?? (import.meta.env.DEV ? 'mock-token' : null);
+  });
 
-  const login = useCallback(async (email: string, _password: string, _orgSlug: string) => {
-    // Mock login bypass
-    const newToken = 'mock-token';
-    const newUser = { id: 'mock-id', email, name: 'Admin Demo', role: 'ADMIN' };
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    const saved = localStorage.getItem('qf_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        // Fall through
+      }
+    }
+    return import.meta.env.DEV
+      ? { id: 'mock-id', email: 'admin@demo.com', name: 'Admin Demo', role: 'ADMIN' }
+      : null;
+  });
+
+  // Keep Axios Authorization header synced with token
+  useEffect(() => {
+    if (token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    } else {
+      delete axios.defaults.headers.common['Authorization'];
+    }
+  }, [token]);
+
+  const login = useCallback(async (email: string, password: string, organizationSlug: string) => {
+    const res = await axios.post('/api/auth/login', {
+      email,
+      password,
+      organizationSlug,
+    });
+
+    const { token: newToken, user: newUser } = res.data;
     setToken(newToken);
     setUser(newUser);
     localStorage.setItem('qf_token', newToken);
@@ -37,16 +60,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     axios.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
   }, []);
 
-  const logout = useCallback(() => {
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem('qf_token');
-    localStorage.removeItem('qf_user');
-    delete axios.defaults.headers.common['Authorization'];
-  }, []);
-
-  // Set token on page refresh
-  if (token) axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  const logout = useCallback(async () => {
+    try {
+      if (token && token !== 'mock-token') {
+        await axios.post('/api/auth/logout');
+      }
+    } catch {
+      // Ignore network errors during logout
+    } finally {
+      setToken(null);
+      setUser(null);
+      localStorage.removeItem('qf_token');
+      localStorage.removeItem('qf_user');
+      delete axios.defaults.headers.common['Authorization'];
+    }
+  }, [token]);
 
   return (
     <AuthContext.Provider value={{ token, user, login, logout }}>

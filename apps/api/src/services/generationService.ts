@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '../utils/prisma.js';
 import { logger } from '../utils/logger.js';
 import { runValidationPipeline } from './validationService.js';
-import { checkDuplicate } from './deduplicationService.js';
+import { checkDuplicate, storeEmbedding } from './deduplicationService.js';
 import { getLLMClient } from './llmService.js';
 import { triggerWebhook } from '../routes/webhooks.js';
 import { generationQueue } from '../queues/generationQueue.js';
@@ -69,10 +69,46 @@ export async function _runPipelineAsync(
           continue;
         }
 
+        // Sanitize LLM payload — extract only defined Question model columns
+        const {
+          title,
+          statement,
+          options,
+          answer,
+          explanation,
+          optimalSolution,
+          bruteForceSolution,
+          testCases,
+          languages,
+          tags,
+          timeComplexity,
+          spaceComplexity,
+        } = rawQuestion;
+
+        const combinedExplanation = [
+          explanation,
+          timeComplexity ? `Time Complexity: ${timeComplexity}` : '',
+          spaceComplexity ? `Space Complexity: ${spaceComplexity}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+
         // Save as VALIDATING
         const saved = await prisma.question.create({
           data: {
-            ...rawQuestion,
+            title: title ?? `${type} Question (${difficulty})`,
+            statement: statement ?? '',
+            type: type as any,
+            difficulty: difficulty as any,
+            topic: rawQuestion.topic ?? config.topics[0] ?? 'General',
+            options: options ?? null,
+            answer: answer ?? null,
+            explanation: combinedExplanation || null,
+            optimalSolution: optimalSolution ?? null,
+            bruteForceSolution: bruteForceSolution ?? null,
+            testCases: testCases ?? null,
+            languages: Array.isArray(languages) ? languages : config.languages,
+            tags: Array.isArray(tags) ? tags : [],
             status: 'VALIDATING',
             organizationId: config.organizationId,
             retryCount: retries,
@@ -87,9 +123,13 @@ export async function _runPipelineAsync(
             where: { id: saved.id },
             data: { status: 'VALIDATED', validationResult: validationResult as any },
           });
+
+          // Store vector embedding for deduplication against future generations
+          await storeEmbedding(saved.id, statement);
+
           // Trigger webhook if configured
           await triggerWebhook(config.organizationId, {
-            event: 'question.approved',
+            event: 'question.validated',
             timestamp: new Date().toISOString(),
             organizationId: config.organizationId,
             data: { questionId: saved.id, type, difficulty },

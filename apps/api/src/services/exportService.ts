@@ -56,16 +56,18 @@ export async function exportToPdf(
   const html = buildPdfHtml(paper, includeAnswers, watermarkText, paperId);
 
   const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-  const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: 'networkidle0' });
-  const pdfBuffer = await page.pdf({
-    format: 'A4',
-    printBackground: true,
-    margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
-  });
-  await browser.close();
-
-  return Buffer.from(pdfBuffer);
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
+    });
+    return Buffer.from(pdfBuffer);
+  } finally {
+    await browser.close().catch(() => {});
+  }
 }
 
 /**

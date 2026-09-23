@@ -36,6 +36,7 @@ export async function executeSandbox(req: SandboxExecutionRequest): Promise<Sand
         compile_timeout: 10_000,
         run_memory_limit: 128_000_000, // 128MB
       }),
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!response.ok) {

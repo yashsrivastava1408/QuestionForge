@@ -1,35 +1,22 @@
 import { Router } from 'express';
-import { z } from 'zod';
-import { prisma } from '../utils/prisma.js';
+import { WebhooksController } from '../controllers/webhooksController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
-import crypto from 'crypto';
 import { enqueueWebhook } from '../queues/webhookQueue.js';
 
 export const webhooksRouter = Router();
 
+// GET /api/webhooks — Get current webhook configuration for org
+webhooksRouter.get('/', authenticate, authorize('ADMIN'), WebhooksController.getConfig);
+
 // POST /api/webhooks/configure — Set webhook URL for org
-webhooksRouter.post('/configure', authenticate, authorize('ADMIN'), async (req, res, next) => {
-  try {
-    const { webhookUrl } = z.object({ webhookUrl: z.string().url() }).parse(req.body);
-    const webhookSecret = crypto.randomBytes(32).toString('hex');
+webhooksRouter.post('/configure', authenticate, authorize('ADMIN'), WebhooksController.configure);
 
-    await prisma.organization.update({
-      where: { id: req.user!.organizationId },
-      data: { webhookUrl, webhookSecret },
-    });
-
-    res.json({
-      success: true,
-      webhookSecret,
-      message: 'Webhook configured. Store your secret securely — it will not be shown again.',
-    });
-  } catch (err) { next(err); }
-});
+// POST /api/webhooks/test — Enqueue a test webhook delivery to verify LMS/ATS connectivity
+webhooksRouter.post('/test', authenticate, authorize('ADMIN'), WebhooksController.test);
 
 /**
  * Enqueues a webhook delivery — does not block the caller.
  * Delivery is handled by the dedicated webhookQueue worker with 5 retries.
- * Replaces the old synchronous fetch() call inside the generation pipeline.
  */
 export async function triggerWebhook(organizationId: string, payload: object): Promise<void> {
   await enqueueWebhook(organizationId, payload);

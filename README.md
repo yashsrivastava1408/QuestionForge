@@ -1,6 +1,7 @@
 # Question Forge
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+[![CI](https://github.com/yashsrivastava1408/QuestionForge/actions/workflows/ci.yml/badge.svg)](https://github.com/yashsrivastava1408/QuestionForge/actions/workflows/ci.yml)
 ![React](https://img.shields.io/badge/React-18-blue)
 ![Node](https://img.shields.io/badge/Node-20%2B-green)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue)
@@ -8,6 +9,7 @@
 ![Prisma](https://img.shields.io/badge/Prisma-ORM-teal)
 ![Docker](https://img.shields.io/badge/Docker-Enabled-blue)
 ![Redis](https://img.shields.io/badge/Redis-BullMQ-red)
+![Bull Board](https://img.shields.io/badge/Bull%20Board-Live%20Dashboard-orange)
 ![Vitest](https://img.shields.io/badge/Vitest-Unit%20%26%20Integration-yellow)
 ![AWS](https://img.shields.io/badge/AWS-Terraform-orange)
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
@@ -98,6 +100,9 @@ By combining **LangGraph agentic debate**, **isolated Docker sandboxed code exec
 
 10. **Automated Testing Suite (Vitest + Supertest):**
     Integrated automated unit and integration tests covering deep health probes, vector deduplication boundary mathematics, Zod schema validation, and RBAC authorization without requiring live external services.
+
+11. **Live Bull Board Queue Monitoring (`/admin/queues`):**
+    Embedded `@bull-board/express` dashboard protected by admin JWT authentication. Allows operations teams to inspect active and completed generation jobs, view failure stack traces, retry dead-letter jobs with 1-click, and monitor webhook delivery backoffs in real time.
 
 ---
 
@@ -804,20 +809,17 @@ Question Forge is designed according to **12-Factor App principles** for horizon
 ## Roadmap & Future Extensions
 
 - **SSO SAML 2.0 & OIDC:** Native enterprise Okta, Google Workspace, and Microsoft Azure AD single sign-on integration.
-- **Bull Board Dashboard:** Embedded administrator UI for live inspection of BullMQ generation and webhook queues.
 - **Additional Language Runtimes:** Out-of-the-box support for Go, Rust, C#, and Ruby sandboxes.
 - **Custom Agent Fine-Tuning:** LoRA adapters for fine-tuning the Generator and Adversary agents on customer-specific historical question banks.
 
 ---
 
-## Contributing
+## Contributing & Community
 
-We welcome contributions! Please follow our standard process:
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m "feat: add amazing feature"`
-4. Push to branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
+We welcome contributions! Please review our community guidelines:
+- [**Contributing Guide** (`CONTRIBUTING.md`)](./CONTRIBUTING.md): Monorepo setup, branching rules, and PR guidelines.
+- [**Code of Conduct** (`CODE_OF_CONDUCT.md`)](./CODE_OF_CONDUCT.md): Contributor Covenant v2.1 standards.
+- [**Security Policy** (`SECURITY.md`)](./SECURITY.md): Responsible disclosure instructions and response SLAs.
 
 ---
 

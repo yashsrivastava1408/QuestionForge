@@ -18,12 +18,13 @@ import { prisma } from './utils/prisma.js';
 import { connectRedis, redisClient } from './utils/redis.js';
 import { startGenerationWorker } from './queues/generationWorker.js';
 import { startWebhookWorker } from './queues/webhookQueue.js';
+import { setupBullBoard, bullBoardAuthMiddleware } from './admin/bullBoard.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
 // ---- Security Middleware ----
-app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false }));
 
 /**
  * Dynamic CORS allowlist — supports multi-tenant SaaS, mobile apps, and
@@ -113,6 +114,10 @@ app.use('/api/export', exportRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/admin', adminRouter);
+
+// ---- Bull Board Interactive Queue Dashboard (Admin Only) ----
+const bullBoardAdapter = setupBullBoard();
+app.use('/admin/queues', bullBoardAuthMiddleware, bullBoardAdapter.getRouter());
 
 // ---- Error Handler (must be last) ----
 app.use(errorHandler);

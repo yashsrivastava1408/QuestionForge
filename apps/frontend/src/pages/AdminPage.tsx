@@ -11,6 +11,7 @@ import {
   Send,
   CheckCircle2,
   AlertCircle,
+  ExternalLink,
 } from 'lucide-react';
 
 export default function AdminPage() {
@@ -342,13 +343,24 @@ export default function AdminPage() {
                 <Cpu size={16} style={{ display: 'inline', marginRight: 8 }} />
                 BullMQ Distributed Queue Monitor
               </div>
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => refetchQueues()}
-                disabled={isFetchingQueues}
-              >
-                <RefreshCw size={13} className={isFetchingQueues ? 'spinner' : ''} /> Refresh
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <a
+                  href={`http://localhost:4000/admin/queues?token=${localStorage.getItem('token') || ''}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-primary btn-sm"
+                  style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <ExternalLink size={13} /> Live Bull Board UI
+                </a>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => refetchQueues()}
+                  disabled={isFetchingQueues}
+                >
+                  <RefreshCw size={13} className={isFetchingQueues ? 'spinner' : ''} /> Refresh
+                </button>
+              </div>
             </div>
 
             <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 20 }}>

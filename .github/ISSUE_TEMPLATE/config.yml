@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "💬 GitHub Discussions"
+    url: "https://github.com/yashsrivastava1408/QuestionForge/discussions"
+    about: "Ask questions, share ideas, and engage with the Question Forge community."
+  - name: "🔒 Security Vulnerability Reporting"
+    url: "https://github.com/yashsrivastava1408/QuestionForge/security/policy"
+    about: "Please report sensitive security issues privately following our security policy."

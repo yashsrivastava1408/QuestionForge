@@ -31,3 +31,30 @@ export async function connectRedis(): Promise<void> {
     redisClient.connect().catch(() => {}),
   ]);
 }
+
+/**
+ * Checks whether a JWT's JTI has been revoked in Redis.
+ */
+export async function isTokenBlacklisted(jti: string): Promise<boolean> {
+  try {
+    const isRevoked = await redisClient.get(`jwt:revoked:${jti}`);
+    return isRevoked === '1';
+  } catch (err: any) {
+    logger.warn('[Redis] Error checking token blacklist', { error: err.message });
+    return false;
+  }
+}
+
+/**
+ * Adds a JWT's JTI to the revocation blacklist with a matching TTL.
+ */
+export async function blacklistToken(jti: string, ttlSeconds: number): Promise<void> {
+  try {
+    if (ttlSeconds > 0) {
+      await redisClient.set(`jwt:revoked:${jti}`, '1', 'EX', ttlSeconds);
+    }
+  } catch (err: any) {
+    logger.error('[Redis] Error adding token to blacklist', { error: err.message });
+  }
+}
+

@@ -1,20 +1,28 @@
-# Question Forge
+<div align="center">
+  <img src="./assets/hero-banner.png" alt="Question Forge — The Enterprise-Grade AI Validation Engine" width="100%" />
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-[![CI](https://github.com/yashsrivastava1408/QuestionForge/actions/workflows/ci.yml/badge.svg)](https://github.com/yashsrivastava1408/QuestionForge/actions/workflows/ci.yml)
-![React](https://img.shields.io/badge/React-18-blue)
-![Node](https://img.shields.io/badge/Node-20%2B-green)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue)
-![Turborepo](https://img.shields.io/badge/Turborepo-Monorepo-blue)
-![Prisma](https://img.shields.io/badge/Prisma-ORM-teal)
-![Docker](https://img.shields.io/badge/Docker-Enabled-blue)
-![Redis](https://img.shields.io/badge/Redis-BullMQ-red)
-![Bull Board](https://img.shields.io/badge/Bull%20Board-Live%20Dashboard-orange)
-![Vitest](https://img.shields.io/badge/Vitest-Unit%20%26%20Integration-yellow)
-![AWS](https://img.shields.io/badge/AWS-Terraform-orange)
-![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
+  <br />
+  <br />
 
-**Enterprise-Grade Multi-Agent AI Assessment Generation, Code Execution & Validation Platform**
+  <h1>Question Forge</h1>
+  <p><strong>Enterprise-Grade Multi-Agent AI Assessment Generation, Code Execution & Validation Platform</strong></p>
+
+  <p>
+    <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" /></a>
+    <a href="https://github.com/yashsrivastava1408/QuestionForge/actions/workflows/ci.yml"><img src="https://github.com/yashsrivastava1408/QuestionForge/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <img src="https://img.shields.io/badge/React-18-blue" alt="React" />
+    <img src="https://img.shields.io/badge/Node-20%2B-green" alt="Node" />
+    <img src="https://img.shields.io/badge/TypeScript-5.4-blue" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/Turborepo-Monorepo-blue" alt="Turborepo" />
+    <img src="https://img.shields.io/badge/Prisma-ORM-teal" alt="Prisma" />
+    <img src="https://img.shields.io/badge/Docker-Enabled-blue" alt="Docker" />
+    <img src="https://img.shields.io/badge/Redis-BullMQ-red" alt="Redis" />
+    <img src="https://img.shields.io/badge/Bull%20Board-Live%20Dashboard-orange" alt="Bull Board" />
+    <img src="https://img.shields.io/badge/Vitest-Unit%20%26%20Integration-yellow" alt="Vitest" />
+    <img src="https://img.shields.io/badge/AWS-Terraform-orange" alt="AWS" />
+    <a href="https://github.com/yashsrivastava1408/QuestionForge/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" /></a>
+  </p>
+</div>
 
 Question Forge is an open-source, multi-agent AI orchestration platform engineered for enterprise HR and technical recruiting organizations. It automates the generation, rigorous algorithmic validation, human-in-the-loop review, and secure export of technical interview questions (Data Structures & Algorithms, Object-Oriented Design, System Design, SQL, and Conceptual MCQs).
 

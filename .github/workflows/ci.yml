@@ -13,22 +13,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-and-build:
-    name: Test & Build (Turborepo)
+  lint:
+    name: 🔍 Lint & Code Standards
     runs-on: ubuntu-latest
-
-    env:
-      NODE_ENV: test
-      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/qforge_test?sslmode=disable"
-      REDIS_URL: "redis://localhost:6379"
-      JWT_SECRET: "ci-test-cryptographically-secure-jwt-secret-12345"
-      ENABLE_EMBEDDED_WORKERS: "false"
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       - name: Setup Node.js (v20)
         uses: actions/setup-node@v4
@@ -36,14 +26,98 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Install Monorepo Dependencies
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+  typecheck:
+    name: 🏷️ TypeScript Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
         run: npm ci
 
       - name: Generate Prisma Client
         run: npm run db:generate
 
-      - name: Run Automated Test Suite (Vitest)
+      - name: Run Monorepo Typecheck (tsc --noEmit)
+        run: npm run typecheck
+
+  test:
+    name: 🧪 Automated Test Suite (Vitest)
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/qforge_test?sslmode=disable"
+      REDIS_URL: "redis://localhost:6379"
+      JWT_SECRET: "ci-cryptographically-secure-jwt-secret-key-12345"
+      ENABLE_EMBEDDED_WORKERS: "false"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
+      - name: Run Vitest Suite
         run: npm run test
 
-      - name: Verify Monorepo Builds (Turborepo)
+  build:
+    name: ⚡ Monorepo Production Build (Turborepo)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
+      - name: Run Turborepo Build
         run: npm run build
+
+  security:
+    name: 🛡️ Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Audit Dependencies for Known CVEs
+        run: npm audit --audit-level=critical
+        continue-on-error: true

@@ -1,4 +1,11 @@
-# Question Forge Enterprise Documentation
+<div align="center">
+  <img src="./assets/hero-banner.png" alt="Question Forge Enterprise Documentation" width="100%" />
+
+  <br />
+  <br />
+
+  <h1>Question Forge Enterprise Documentation</h1>
+</div>
 
 Welcome to the technical documentation hub for **Question Forge**, an enterprise-grade multi-agent AI orchestration platform engineered for technical question generation, sandboxed validation, and assessment lifecycle management.
 

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { FileDown, BookOpen, Plus } from 'lucide-react';
+import { FileDown, BookOpen, Plus, Download } from 'lucide-react';
 
 export default function PapersPage() {
   const qc = useQueryClient();
@@ -40,7 +40,7 @@ export default function PapersPage() {
       const qRes = await axios.get(`/api/questions?status=APPROVED&limit=${count}`);
       const questions = qRes.data.questions;
       if (questions.length === 0) {
-        throw new Error('No approved questions available in the bank.');
+        throw new Error('No approved questions found. Please approve questions in the Review Queue first.');
       }
       
       await axios.post('/api/papers', {
@@ -51,7 +51,7 @@ export default function PapersPage() {
       qc.invalidateQueries({ queryKey: ['papers'] });
       (e.target as HTMLFormElement).reset();
     } catch (err: any) {
-      setGenerateError(err.response?.data?.error?.message || err.message || 'Failed to generate paper');
+      setGenerateError(err.response?.data?.error?.message || err.message || 'Failed to assemble assessment paper');
     } finally {
       setGenerating(false);
     }
@@ -61,83 +61,182 @@ export default function PapersPage() {
 
   return (
     <>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
         <div>
-          <h1>Papers</h1>
-          <p>Draft and export full assessment papers.</p>
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 4 }}>
+            <span>Console</span> / <span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Assessments</span>
+          </div>
+          <h1 style={{ margin: 0 }}>Assessment Papers</h1>
+          <p style={{ margin: 0, marginTop: 4 }}>Curate, compile, and securely export calibrated technical evaluations.</p>
         </div>
-        <form onSubmit={handleGenerate} style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-secondary)', padding: 16, borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
-          <input name="title" className="form-input" placeholder="Paper Title" required style={{ width: 200, padding: '8px 12px' }} />
-          <input name="count" className="form-input" type="number" min={1} max={100} placeholder="Questions" required style={{ width: 100, padding: '8px 12px' }} defaultValue={10} />
-          <button type="submit" className="btn btn-primary" disabled={generating}>
-            {generating ? <span className="spinner" /> : <><Plus size={16} /> Auto-Generate</>}
+
+        {/* Paper Assembly Form */}
+        <form
+          onSubmit={handleGenerate}
+          style={{
+            display: 'flex',
+            gap: 10,
+            alignItems: 'center',
+            background: 'var(--bg-glass-card)',
+            backdropFilter: 'blur(16px)',
+            padding: '10px 14px',
+            borderRadius: 'var(--radius-lg)',
+            border: '1px solid var(--border-light)',
+            boxShadow: 'var(--shadow-card)'
+          }}
+        >
+          <input
+            name="title"
+            className="form-input"
+            placeholder="e.g. SDE-2 Systems Evaluation"
+            required
+            style={{ width: 220, height: 36 }}
+          />
+          <input
+            name="count"
+            className="form-input"
+            type="number"
+            min={1}
+            max={100}
+            placeholder="Count"
+            required
+            style={{ width: 80, height: 36 }}
+            defaultValue={10}
+          />
+          <button type="submit" className="btn btn-primary" disabled={generating} style={{ height: 36 }}>
+            {generating ? <span className="spinner" /> : (
+              <>
+                <Plus size={15} />
+                <span>Compile Paper</span>
+              </>
+            )}
           </button>
         </form>
       </div>
-      {generateError && <div className="alert alert-error" style={{ margin: '24px 40px 0' }}>{generateError}</div>}
+
+      {generateError && (
+        <div className="alert alert-error" style={{ margin: '24px 40px 0' }}>
+          {generateError}
+        </div>
+      )}
+
       <div className="page-body">
         {isLoading ? (
           <div className="grid-2">
-            {[...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ height: 180, borderRadius: 12 }} />)}
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="skeleton" style={{ height: 160, borderRadius: 14 }} />
+            ))}
           </div>
         ) : papers.length === 0 ? (
-          <div className="empty-state">
-            <BookOpen size={48} />
-            <h3>No papers yet</h3>
-            <p>Use the Auto-Generate button above to create a paper from approved questions.</p>
+          <div className="card empty-state" style={{ padding: '72px 24px' }}>
+            <div style={{
+              width: 64,
+              height: 64,
+              borderRadius: 20,
+              background: 'rgba(244, 63, 94, 0.15)',
+              border: '1px solid rgba(244, 63, 94, 0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--color-primary)',
+              boxShadow: '0 0 32px rgba(244, 63, 94, 0.2)'
+            }}>
+              <BookOpen size={32} />
+            </div>
+            <h3 style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-display)', marginTop: 12 }}>
+              No Assessment Papers Created Yet
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', maxWidth: 440 }}>
+              Use the compiler above to bundle approved questions from your bank into a comprehensive assessment paper.
+            </p>
           </div>
         ) : (
           <div className="grid-2">
-            {papers.map((paper: any, i: number) => (
-              <div key={paper.id} className={`card animate-fade-in animate-delay-${Math.min(i + 1, 4)}`}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-                  <div>
-                    <div className="card-title">{paper.title}</div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>
-                      Paper ID: <code style={{ fontFamily: 'var(--font-mono)', background: 'var(--color-bg-elevated)', padding: '1px 6px', borderRadius: 4 }}>
-                        {paper.id.slice(0, 8).toUpperCase()}
-                      </code>
+            {papers.map((paper: any, i: number) => {
+              const links = downloadLinks[paper.id] ?? [];
+
+              return (
+                <div key={paper.id} className={`card animate-fade-in animate-delay-${Math.min(i + 1, 4)}`}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                    <div>
+                      <h3 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: 0, fontFamily: 'var(--font-display)' }}>
+                        {paper.title}
+                      </h3>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                        Created on {new Date(paper.createdAt).toLocaleDateString()}
+                      </div>
                     </div>
+                    <span className="badge badge-dsa" style={{ fontSize: 11 }}>
+                      {paper.questionCount ?? paper.questions?.length ?? 0} Questions
+                    </span>
                   </div>
-                  <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{paper._count?.questions ?? 0} questions</span>
-                </div>
 
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 16 }}>
-                  Created {new Date(paper.createdAt).toLocaleDateString()}
-                </div>
+                  <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 20 }}>
+                    Calibrated evaluation bundle ready for LMS export, offline printing, or ATS dispatch.
+                  </p>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {[
-                    { format: 'JSON', label: 'Export JSON', desc: 'Machine-readable' },
-                    { format: 'PDF_CANDIDATE', label: 'Candidate PDF', desc: 'Questions only + watermark' },
-                    { format: 'PDF_INTERNAL', label: 'Internal PDF', desc: 'Includes answers + explanations' },
-                  ].map(e => (
-                    <button
-                      key={e.format}
-                      className="btn btn-secondary btn-sm"
-                      style={{ justifyContent: 'flex-start', gap: 8 }}
-                      disabled={exporting === paper.id + e.format}
-                      onClick={() => handleExport(paper.id, e.format)}
-                    >
-                      {exporting === paper.id + e.format ? <span className="spinner" /> : <FileDown size={14} />}
-                      <span>{e.label}</span>
-                      <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--color-text-muted)' }}>{e.desc}</span>
-                    </button>
-                  ))}
-                </div>
-
-                {downloadLinks[paper.id]?.map((link, i) => (
-                  <div key={i} className="alert alert-success" style={{ marginTop: 12, padding: '10px 14px' }}>
-                    <FileDown size={14} />
-                    <div style={{ fontSize: 12 }}>
-                      <strong>{link.format}</strong> ready. &nbsp;
-                      <a href={link.url} style={{ color: 'var(--color-success)', textDecoration: 'underline' }}>Download</a>
-                      &nbsp;· Expires at {new Date(link.expires).toLocaleTimeString()}
+                  {/* Export Options */}
+                  <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: 16 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 10 }}>
+                      Export Assessment Artifact
                     </div>
+
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {['pdf', 'markdown', 'json'].map(fmt => (
+                        <button
+                          key={fmt}
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleExport(paper.id, fmt)}
+                          disabled={exporting === paper.id + fmt}
+                          style={{ textTransform: 'uppercase', fontSize: 11, padding: '5px 12px' }}
+                        >
+                          {exporting === paper.id + fmt ? (
+                            <span className="spinner" />
+                          ) : (
+                            <FileDown size={13} />
+                          )}
+                          <span>{fmt}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Active Download Links */}
+                    {links.length > 0 && (
+                      <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {links.map((link, idx) => (
+                          <a
+                            key={idx}
+                            href={link.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '8px 12px',
+                              borderRadius: 'var(--radius-sm)',
+                              background: 'rgba(16, 185, 129, 0.1)',
+                              border: '1px solid rgba(16, 185, 129, 0.25)',
+                              color: '#10b981',
+                              fontSize: 12,
+                              textDecoration: 'none'
+                            }}
+                          >
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+                              <Download size={13} />
+                              Download {link.format.toUpperCase()} Bundle
+                            </span>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                              Expires {new Date(link.expires).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

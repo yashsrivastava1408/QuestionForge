@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Enterprise-grade open-source DSA & OOPS placement question generator with AI validation",
   "private": true,
+  "type": "module",
   "packageManager": "npm@10.8.2",
   "workspaces": [
     "apps/*",
@@ -13,16 +14,20 @@
     "dev:worker": "npm run dev:worker --workspace=apps/api",
     "build": "turbo run build",
     "test": "turbo run test",
-    "lint": "turbo run lint",
+    "lint": "eslint apps/api/src apps/frontend/src",
+    "typecheck": "turbo run typecheck",
     "db:generate": "npm run db:generate --workspace=packages/shared",
     "db:migrate": "npm run db:migrate --workspace=packages/shared",
     "db:studio": "npm run db:studio --workspace=packages/shared",
     "db:seed": "npm run db:seed --workspace=packages/shared"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "concurrently": "^8.2.2",
+    "eslint": "^10.11.0",
     "turbo": "^2.0.0",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.70.1"
   },
   "engines": {
     "node": ">=20.0.0",

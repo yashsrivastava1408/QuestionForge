@@ -91,6 +91,15 @@ Users belong to an organization under one of three granular roles:
 Because generated questions often contain HTML-sensitive characters (`<`, `>`, `&`, quotes in code snippets and explanations), unescaped rendering in headless browsers (Puppeteer) or web frontends presents severe Cross-Site Scripting (XSS) and Server-Side Request Forgery (SSRF) attack vectors.
 
 ### HTML Entity Sanitization Pipeline
+
+```mermaid
+flowchart LR
+    Input["User/LLM-authored content\n(statement, options, explanation, code)"] --> Sanitize["sanitizeHtml()\nescape & < > \" '"]
+    Sanitize --> Branch{"Destination?"}
+    Branch -- "PDF export" --> Puppeteer["Puppeteer\n(hardened launch flags)"] --> PDF(["Watermarked PDF -> S3"])
+    Branch -- "API response" --> JSON(["JSON response to SPA\n(React escapes on render)"])
+```
+
 Prior to PDF rendering or client transmission, all dynamic content passes through an entity encoder:
 
 ```typescript
@@ -120,24 +129,21 @@ const browser = await puppeteer.launch({
 
 ---
 
-## 5. Bring-Your-Own-Key (BYOK) Envelope Encryption
+## 5. Bring-Your-Own-Key (BYOK): Schema-Ready, Not Yet Implemented
 
-When organizations provide their own LLM API keys (OpenAI, Anthropic, Google Gemini), keys are never stored in plaintext. They are encrypted using **AES-256-GCM** with authenticated data:
+> **Status check:** `Organization.llmApiKeysEncrypted` exists in `schema.prisma` as a `Json?` column, and `ENCRYPTION_KEY` is a documented environment variable — but no code in `apps/api` currently reads, writes, or encrypts a per-organization key. Every LLM call today (`llmService.ts`) reads a single set of server-wide keys straight from `process.env.ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_GEMINI_API_KEY`. Earlier drafts of this document described AES-256-GCM envelope encryption as if it were live; it wasn't, and this section now says so directly instead of documenting aspiration as fact.
 
-```typescript
-export function encryptApiKey(apiKey: string, masterKeyHex: string): EncryptedPayload {
-  const iv = crypto.randomBytes(12); // 96-bit IV for GCM
-  const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(masterKeyHex, 'hex'), iv);
-  
-  let encrypted = cipher.update(apiKey, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  const authTag = cipher.getAuthTag().toString('hex');
-  
-  return {
-    iv: iv.toString('hex'),
-    ciphertext: encrypted,
-    authTag: authTag,
-  };
-}
+The column and env var exist because this is the intended target design, and it's a contained addition when it's actually needed — an `encryptApiKey`/`decryptApiKey` pair using Node's `crypto.createCipheriv('aes-256-gcm', ...)`, a settings endpoint to write `llmApiKeysEncrypted`, and a change to `getLLMClient` to check the organization's decrypted key before falling back to the server-wide env var:
+
+```mermaid
+flowchart LR
+    subgraph Today ["Implemented today"]
+        Env["process.env.ANTHROPIC_API_KEY\n(server-wide, single tenant of keys)"] --> LLM1["llmService.getLLMClient()"]
+    end
+
+    subgraph Target ["Target design (not built yet)"]
+        OrgKey[("Organization.llmApiKeysEncrypted\nAES-256-GCM, ENCRYPTION_KEY-derived")] -.-> Decrypt["decryptApiKey()"] -.-> LLM2["llmService.getLLMClient()\n(org key first, env var fallback)"]
+    end
 ```
-The master encryption key is supplied via the `ENCRYPTION_KEY` environment variable and never written to database tables.
+
+Until that's built, treat `ENCRYPTION_KEY` and `llmApiKeysEncrypted` as reserved, not active.

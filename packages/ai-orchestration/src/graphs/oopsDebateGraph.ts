@@ -1,42 +1,27 @@
 /**
- * OOPS Adversarial Debate Graph (LangGraph)
- * 
- * State machine: Generator → Adversary → Judge → (if FAIL) → Generator (retry)
- * 
- * Nodes:
- *  - generator: Creates the OOPS question
- *  - adversary: Challenges the question for ambiguity / errors
- *  - judge: Decides PASS or FAIL based on debate
- * 
- * Edges:
- *  - generator → adversary
- *  - adversary → judge
- *  - judge: if PASS → END, if FAIL and retries < 3 → generator
+ * OOPS Adversarial Debate Graph
+ * State: Generate → Debate (Adversary + Judge) → (if FAIL) → Generate (retry, max N)
+ *
+ * Conceptual/OOPS questions don't get sandbox-executed — instead the
+ * "validate" step is a cross-model adversarial debate (see
+ * `apps/api/src/services/agentDebateService.ts`, which implements the
+ * Adversary and Judge prompts against a *different* LLM provider than the
+ * one that generated the draft). This module is the same retry state
+ * machine as `dsaGenerationGraph.ts`, just named and typed for that use
+ * case — both are built on `generateValidateGraph.ts`.
  */
+import {
+  runGenerateValidateGraph,
+  type GenerateValidateNodes,
+  type GenerateValidateRunResult,
+} from './generateValidateGraph.js';
 
-interface OopsDebateState {
-  question: string;
-  generatedContent: string;
-  adversaryFinding: string | null;
-  judgeDecision: 'PASS' | 'FAIL' | null;
-  iteration: number;
-  maxIterations: number;
+export type OopsDebateNodes<TDraft, TValidation> = GenerateValidateNodes<TDraft, TValidation>;
+export type OopsDebateResult<TDraft, TValidation> = GenerateValidateRunResult<TDraft, TValidation>;
+
+export async function runOopsDebateGraph<TDraft, TValidation>(
+  nodes: OopsDebateNodes<TDraft, TValidation>,
+  options: { maxAttempts?: number } = {}
+): Promise<OopsDebateResult<TDraft, TValidation>> {
+  return runGenerateValidateGraph(nodes, options);
 }
-
-// Simulated LangGraph node definitions
-// In production: import { StateGraph } from "@langchain/langgraph"
-
-export async function runOopsDebateGraph(
-  questionPrompt: string,
-  maxIterations = 3
-): Promise<{ passed: boolean; content: string; report: string }> {
-  // This is a sketch — the actual LangGraph StateGraph will be wired up in Phase 2
-  // The API's agentDebateService.ts contains the working implementation
-  return {
-    passed: true,
-    content: questionPrompt,
-    report: 'LangGraph debate graph stub — see agentDebateService.ts for implementation',
-  };
-}
-
-

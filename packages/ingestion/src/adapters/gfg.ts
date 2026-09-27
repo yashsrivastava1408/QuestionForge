@@ -2,9 +2,10 @@
  * GeeksForGeeks Ingestion Adapter
  * Uses Cheerio (server-side HTML parsing) to extract question data.
  */
+import type { IngestedQuestion } from './leetcode.js';
 
 export class GFGAdapter {
-  async fetchQuestion(slug: string): Promise<any | null> {
+  async fetchQuestion(slug: string): Promise<IngestedQuestion | null> {
     try {
       const url = `https://www.geeksforgeeks.org/${slug}/`;
       const resp = await fetch(url, {

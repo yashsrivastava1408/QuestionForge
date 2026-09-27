@@ -14,7 +14,7 @@ const LANGUAGE_VERSIONS: Record<string, string> = {
 };
 
 export async function executeSandbox(req: SandboxExecutionRequest): Promise<SandboxExecutionResult> {
-  const version = req.version === 'latest'
+  const version = !req.version || req.version === 'latest'
     ? (LANGUAGE_VERSIONS[req.language] ?? '*')
     : req.version;
   const start = Date.now();
@@ -28,13 +28,20 @@ export async function executeSandbox(req: SandboxExecutionRequest): Promise<Sand
         version,
         files: [{ content: req.code }],
         stdin: req.stdin ?? '',
-        run_timeout: req.timeoutMs ?? 10_000,
-        compile_timeout: 15_000,
+        // Capped at 3s regardless of the caller's request — a single test case should
+        // never be allowed to stall a batch of otherwise-parallel sandbox executions.
+        run_timeout: Math.min(req.timeoutMs ?? 3000, 3000),
+        compile_timeout: 10_000,
         run_memory_limit: 128_000_000,
       }),
+      signal: AbortSignal.timeout(15_000),
     });
 
-    if (!response.ok) throw new Error(`Piston error: ${response.status}`);
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`Piston API error: ${response.status} ${response.statusText}: ${errBody}`);
+    }
+
     const data = await response.json() as any;
 
     return {

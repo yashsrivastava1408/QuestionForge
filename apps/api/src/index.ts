@@ -13,6 +13,7 @@ import { exportRouter } from './routes/export.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { webhooksRouter } from './routes/webhooks.js';
 import { adminRouter } from './routes/admin.js';
+import { ingestionRouter } from './routes/ingestion.js';
 import { logger } from './utils/logger.js';
 import { prisma } from './utils/prisma.js';
 import { connectRedis, redisClient } from './utils/redis.js';
@@ -114,6 +115,7 @@ app.use('/api/export', exportRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/ingestion', ingestionRouter);
 
 // ---- Bull Board Interactive Queue Dashboard (Admin Only) ----
 const bullBoardAdapter = setupBullBoard();

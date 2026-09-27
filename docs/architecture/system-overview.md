@@ -44,7 +44,7 @@ flowchart TD
 
     subgraph State_Tier ["Distributed State Layer"]
         Redis[("Redis 7 Cluster / ElastiCache\n- BullMQ 'generation' queue\n- BullMQ 'webhooks' queue\n- JTI Revocation Blacklist\n- Analytics Cache (60s TTL)\n- Distributed Rate Limit Store")]
-        Postgres[("PostgreSQL 16 + pgvector (AWS RDS)\n- Questions, Users, Papers, Reviews\n- IVFFlat High-Dimensional Embeddings\n- Write-Ahead Logging (WAL)")]
+        Postgres[("PostgreSQL 16, pgvector-enabled image (AWS RDS)\n- Questions, Users, Papers, Reviews\n- 256-dim embeddings, compared in application code today\n- Write-Ahead Logging (WAL)")]
         S3[("AWS S3 Export Bucket\n- Watermarked Candidate PDFs\n- Internal Rubric PDFs\n- JSON Bundles")]
     end
 
@@ -155,3 +155,26 @@ const gracefulShutdown = async (signal: string) => {
 };
 ```
 Active jobs are permitted up to 30 seconds to finish execution and persist results before the process terminates.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Orch as Docker / K8s
+    participant Proc as apps/api process
+    participant HTTP as HTTP server
+    participant W as BullMQ Workers
+    participant Redis as Redis
+
+    Orch->>Proc: SIGTERM
+    Proc->>HTTP: server.close()\n(stop accepting new connections)
+    Note over HTTP: In-flight requests finish;\nnew ones get no listener
+    Proc->>W: await worker.close() for each\n(finish current job, stop pulling new ones)
+    W-->>Proc: drained
+    Proc->>Redis: disconnect
+    Proc->>Orch: process.exit(0)
+
+    alt Draining takes > 30s
+        Proc->>Proc: force process.exit(1)
+        Note over Proc: Safety valve — a stuck job\nnever blocks a rolling deploy forever
+    end
+```

@@ -18,18 +18,20 @@ This directory contains deep architectural specifications, data models, multi-ag
 ### 1. Architecture Deep-Dives (`docs/architecture/`)
 - [**System Architecture Overview**](./architecture/system-overview.md)
   *End-to-end distributed system topology, decoupled API vs. Worker processes, caching hierarchies, and fault tolerance.*
-- [**Multi-Agent Adversarial Debate Pipeline**](./architecture/multi-agent-debate.md)
-  *LangGraph state machines, Generator/Adversary/Judge agent roles, consensus scoring, and iterative self-correction loops.*
+- [**LangGraph Generate → Validate → Retry Engine**](./architecture/multi-agent-debate.md)
+  *The real `@langchain/langgraph` `StateGraph`, the generate/validate node contract, and how DSA (sandbox) and OOPS (cross-model debate) plug into the same engine.*
 - [**Sandboxed Code Execution Engine**](./architecture/sandboxed-execution.md)
   *Piston Docker container isolation, security constraints, resource quotas, and differential testing between optimal and brute-force solutions.*
+- [**Real-World Question Ingestion**](./architecture/ingestion-pipeline.md)
+  *LeetCode/GFG adapters, the `/api/ingestion/*` endpoints, and how ingested drafts relate to the AI generation pipeline.*
 - [**Distributed Queue & Worker Engine**](./architecture/queue-and-worker-engine.md)
   *BullMQ and Redis 7 queue mechanics, job lifecycles, concurrency tuning, stalled job recovery, and graceful shutdown signal draining.*
 
 ### 2. Database & Vector Search (`docs/database/`)
 - [**Database Schema, ERD & Indexing Strategy**](./database/schema-and-indexing.md)
   *PostgreSQL 16 relational data model, composite B-Tree indexes, multi-tenant partitioning patterns, and zero-drift Prisma migrations.*
-- [**Vector Deduplication & Semantic Search**](./database/vector-deduplication.md)
-  *Mathematical formulation of cosine similarity, FNV-1a feature hashing, `pgvector` IVFFlat indexing, and cross-assessment deduplication thresholds.*
+- [**Feature-Hashed Vector Deduplication**](./database/vector-deduplication.md)
+  *Mathematical formulation of cosine similarity, FNV-1a feature hashing, today's application-level comparison, and the native `pgvector`/IVFFlat migration path.*
 
 ### 3. Security & Governance (`docs/security/`)
 - [**Enterprise Security Architecture Whitepaper**](./security/security-whitepaper.md)

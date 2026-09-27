@@ -55,7 +55,7 @@ erDiagram
         json bruteForceSolution
         json testCases
         enum status "DRAFT | VALIDATING | VALIDATED | IN_REVIEW | APPROVED | REJECTED | FAILED"
-        float_array embeddingVector "pgvector(1536) / custom"
+        float_array embeddingVector "256-dim FNV-1a hash, app-compared"
         string organizationId FK
         datetime createdAt
         datetime updatedAt
@@ -143,6 +143,16 @@ To guarantee zero downtime in CI/CD pipelines, Question Forge follows backward-c
 2. **Step 2 (Deploy Code)**: Deploy API and worker containers reading from either old or new format.
 3. **Step 3 (Backfill)**: Run non-blocking background script to populate existing rows.
 4. **Step 4 (Contract)**: Apply migration adding `NOT NULL` constraint and drop deprecated columns.
+
+```mermaid
+flowchart LR
+    A["1. Expand\nadd nullable column"] --> B["2. Deploy Code\nold + new replicas both work\nduring a rolling deploy"]
+    B --> C["3. Backfill\nbackground script\npopulates existing rows"]
+    C --> D["4. Contract\nadd NOT NULL,\ndrop deprecated columns"]
+    D --> E(["Old and new code\nnever disagree on schema shape"])
+```
+
+At every step, both the pre-deploy and post-deploy container images must be able to read/write the table without erroring — that's the actual zero-downtime guarantee, not just "the migration ran fast."
 
 Migrations are deployed in GitHub Actions using:
 ```bash

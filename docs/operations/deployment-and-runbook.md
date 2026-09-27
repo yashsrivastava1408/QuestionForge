@@ -2,6 +2,18 @@
 
 This runbook guides Site Reliability Engineers (SRE) and DevOps practitioners through provisioning, deploying, monitoring, and operating Question Forge in high-availability enterprise cloud environments.
 
+```mermaid
+flowchart TD
+    A["1. Provision managed services\n(RDS, ElastiCache, S3)"] --> B["2. terraform apply\n(infra/terraform)"]
+    B --> C["3. docker compose -f docker-compose.prod.yml up -d"]
+    C --> D{"4. Health probes\nGET /health/ready"}
+    D -- "200, all replicas healthy" --> E(["Traffic shifted\nDeployment succeeded"])
+    D -- "503 / timeout" --> F["5. Automated rollback\nrestore previous containers"]
+    F --> G(["Alert dispatched to on-call"])
+```
+
+This is the same shape as the CI/CD diagram in the root `README.md` (`## Core Workflows & Diagrams`), narrowed to what an operator actually runs by hand versus what CI automates end to end.
+
 ---
 
 ## 1. Production Architecture Checklist
@@ -11,7 +23,7 @@ Before launching production workloads, verify that external managed services sat
 | Service | Recommended Managed Service | Minimum Production Sizing |
 |---|---|---|
 | **Database** | AWS RDS PostgreSQL 16 | `db.r6g.xlarge` (32 GB RAM, 4 vCPUs, Multi-AZ enabled) |
-| **Vector Index** | PostgreSQL `pgvector` Extension | `CREATE EXTENSION IF NOT EXISTS vector;` |
+| **Vector Extension** | PostgreSQL `pgvector`-enabled image (`pgvector/pgvector:pg16`, or RDS with the extension allow-listed) | Available for a future native ANN index; today's deduplication runs in application code — see [`vector-deduplication.md`](../database/vector-deduplication.md) |
 | **Cache & Queues**| AWS ElastiCache for Redis 7 | `cache.r6g.large` (Multi-AZ with auto-failover, AOF enabled) |
 | **Export Storage** | AWS S3 Bucket | Private bucket with server-side encryption (SSE-S3 or SSE-KMS) |
 | **Sandbox Cluster**| Auto-Scaling Group (EC2 / Docker) | 2× `c6i.xlarge` running Piston Docker containers |
@@ -101,6 +113,18 @@ If either check fails, the probe returns `503 Service Unavailable`, prompting th
 - **Recovery Time Objective (RTO)**: $< 15\text{ minutes}$ for complete regional failover.
 
 ### Incident Playbooks
+
+```mermaid
+flowchart TD
+    Alert(["Alert / on-call page fires"]) --> Symptom{"What's the symptom?"}
+    Symptom -- "generation.waiting > 50,\nSSE progress stalls" --> A["Scenario A:\nQueue backlog spiking"]
+    Symptom -- "Prisma: 'Timed out fetching\na connection from the pool'" --> B["Scenario B:\nPostgres connection exhaustion"]
+    Symptom -- "Redis: 'OOM command\nnot allowed'" --> C["Scenario C:\nRedis memory pressure"]
+
+    A --> A1["Check Piston health +\nLLM provider rate-limit headers"] --> A2["Scale worker replicas up\n(--scale worker=6)"]
+    B --> B1["Check active API replica count\nvs. DB max_connections"] --> B2["Cap connection_limit/pool_timeout\nor add RDS Proxy"]
+    C --> C1["redis-cli --bigkeys"] --> C2["Verify TTLs on analytics cache\n+ BullMQ retention policy"]
+```
 
 #### Scenario A: BullMQ Queue Backlog Spiking
 1. **Symptom**: `generation.waiting` in `/api/admin/queues/stats` exceeds 50; SSE progress updates stall.

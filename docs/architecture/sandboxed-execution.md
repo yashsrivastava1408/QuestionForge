@@ -87,20 +87,17 @@ Passing simple assertions is insufficient for enterprise technical recruiting. Q
 3. It performs a strict equality check:
    $$\text{Output}(\text{Optimal}, X) \equiv \text{Output}(\text{BruteForce}, X)$$
 
+The real check, inlined in `apps/api/src/services/validationService.ts`'s `_validateDSA`, is the equivalent comparison run per test case across the batch described above:
+
 ```typescript
-export async function verifyDifferentialOutputs(
-  optimalRun: ExecutionResult,
-  bruteForceRun: ExecutionResult
-): Promise<boolean> {
-  if (optimalRun.exitCode !== 0 || bruteForceRun.exitCode !== 0) {
-    return false;
-  }
-  
-  const cleanOptimal = optimalRun.stdout.trim().replace(/\r\n/g, '\n');
-  const cleanBrute = bruteForceRun.stdout.trim().replace(/\r\n/g, '\n');
-  
-  return cleanOptimal === cleanBrute;
+if (optResult.exitCode !== 0 || optResult.stdout.trim() !== tc.expectedOutput.trim()) {
+  optAllPassed = false;
+}
+if (optResult.stdout.trim() !== bruteResult.stdout.trim()) {
+  crossCheckPassed = false;
 }
 ```
 
-If outputs match across all 25+ test cases, the question passes the sandbox validation phase and is routed to vector deduplication.
+The HTTP call to Piston itself (`executeSandbox`) lives in `packages/sandbox/src/pistonClient.ts` — a single shared implementation imported by `apps/api`, not duplicated — and caps `run_timeout` at 3000ms server-side regardless of what a caller requests, with a 15s `AbortSignal` as a hard backstop against a hung Piston instance.
+
+If outputs match across every test case for every configured language, the question passes the sandbox validation phase and moves on to the deduplication check (see [`vector-deduplication.md`](../database/vector-deduplication.md)).

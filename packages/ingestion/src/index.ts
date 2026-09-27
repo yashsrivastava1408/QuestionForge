@@ -14,4 +14,5 @@
  */
 
 export { LeetCodeAdapter } from './adapters/leetcode.js';
+export type { IngestedQuestion } from './adapters/leetcode.js';
 export { GFGAdapter } from './adapters/gfg.js';

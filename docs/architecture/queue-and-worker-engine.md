@@ -67,32 +67,43 @@ When a worker picks up a job:
 ## 3. Worker Configurations & Backoff Strategies
 
 ### Generation Worker Configuration
+
+The real worker (`apps/api/src/queues/generationWorker.ts`) is a thin BullMQ shell — it does not itself know about LangGraph, sandboxes, or debates. It just dequeues a job and hands the whole thing off to `_runPipelineAsync` (`generationService.ts`), which loops over every `(difficulty, type)` slot the request asked for and runs each through the LangGraph generate/validate graph (see [`multi-agent-debate.md`](./multi-agent-debate.md)):
+
 ```typescript
-export const generationWorker = new Worker(
-  'generation',
-  async (job: Job) => {
-    // Stage 1: Initialized (10%)
-    await job.updateProgress({ percent: 10, stage: 'Drafting Problem Spec' });
-    
-    // Stage 2: Adversarial Debate (40%)
-    const debateResult = await runAgentDebate(job.data);
-    await job.updateProgress({ percent: 40, stage: 'Adversarial Debate Complete' });
-    
-    // Stage 3: Sandbox Verification (75%)
-    await job.updateProgress({ percent: 75, stage: 'Parallel Sandboxed Code Execution' });
-    const verified = await runSandboxDifferential(debateResult);
-    
-    // Stage 4: Deduplication & Persistence (100%)
-    const question = await persistValidatedQuestion(verified);
-    return { questionId: question.id, status: 'VALIDATED' };
-  },
-  {
-    connection: redisClient,
-    concurrency: parseInt(process.env.WORKER_CONCURRENCY || '5', 10),
-    lockDuration: 60000,
-  }
-);
+export function startGenerationWorker() {
+  const concurrency = Number(process.env.WORKER_CONCURRENCY ?? 5);
+
+  const worker = new Worker<GenerationJobData>(
+    'generation',
+    async (job: Job<GenerationJobData>) => {
+      logger.info(`[Worker] Processing job ${job.id} (attempt ${job.attemptsMade + 1})`);
+      // Progress percentage is updated inside _runPipelineAsync, once per
+      // (difficulty, type) slot completed — not a fixed 10/40/75/100 schedule.
+      await _runPipelineAsync(job.data.jobId, job.data.config, job);
+    },
+    { connection: redisConnection, concurrency }
+  );
+
+  worker.on('completed', (job) => logger.info(`[Worker] Job ${job.id} completed successfully`));
+  worker.on('failed', (job, err) => logger.error(`[Worker] Job ${job?.id} failed`, { error: err.message }));
+  return worker;
+}
 ```
+
+```mermaid
+flowchart LR
+    Job["BullMQ Job\n{ jobId, config }"] --> Worker["generationWorker\n(thin BullMQ shell)"]
+    Worker --> Pipeline["_runPipelineAsync\n(generationService.ts)"]
+    Pipeline --> Plan["buildDifficultyPlan(config)\n-> [{difficulty, type}, ...]"]
+    Plan --> ForEach{"For each slot..."}
+    ForEach --> Graph["runDsaGenerationGraph /\nrunOopsDebateGraph\n(LangGraph, up to 3 attempts)"]
+    Graph --> Progress["job.updateProgress(\ncompleted / total * 100)"]
+    Progress --> ForEach
+    ForEach -- "all slots done" --> Done(["Job COMPLETED"])
+```
+
+Concretely: a request for 10 questions produces 10 slots, and progress climbs in increments of 10% as each slot's graph settles into `VALIDATED` or `FAILED` — not a fixed four-stage percentage schedule.
 
 ### Webhook Worker & Exponential Backoff
 Customer ATS/LMS endpoints frequently experience transient downtime or rate limiting. Outbound webhooks employ a **5-tier exponential backoff with jitter**:

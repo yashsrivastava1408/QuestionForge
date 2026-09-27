@@ -12,14 +12,31 @@ import {
   CheckCircle2,
   AlertCircle,
   ExternalLink,
+  Download,
 } from 'lucide-react';
+
+interface IngestedQuestionPreview {
+  title: string;
+  statement: string;
+  difficulty: string;
+  topic: string;
+  tags: string[];
+  sourceUrl: string;
+  sourcePlatform: string;
+}
 
 export default function AdminPage() {
   const qc = useQueryClient();
   const [webhookUrl, setWebhookUrl] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'webhooks' | 'queues'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'webhooks' | 'queues' | 'ingestion'>('users');
+
+  // Ingestion tab state
+  const [ingestPlatform, setIngestPlatform] = useState<'leetcode' | 'gfg'>('leetcode');
+  const [ingestSlug, setIngestSlug] = useState('');
+  const [ingestPreview, setIngestPreview] = useState<IngestedQuestionPreview[] | null>(null);
+  const [ingestError, setIngestError] = useState<string | null>(null);
 
   // Users query
   const { data: usersData } = useQuery({
@@ -81,11 +98,39 @@ export default function AdminPage() {
       }),
   });
 
+  // Preview a single question from LeetCode/GFG without saving it
+  const previewMutation = useMutation({
+    mutationFn: () =>
+      axios.post('/api/ingestion/fetch', { platform: ingestPlatform, slug: ingestSlug, save: false }),
+    onSuccess: (data) => {
+      setIngestPreview([data.data.question]);
+      setIngestError(null);
+    },
+    onError: (err: any) => {
+      setIngestPreview(null);
+      setIngestError(err.response?.data?.error?.message ?? 'Failed to fetch question.');
+    },
+  });
+
+  // Save the previewed question as a DRAFT in the question bank
+  const saveIngestedMutation = useMutation({
+    mutationFn: () =>
+      axios.post('/api/ingestion/fetch', { platform: ingestPlatform, slug: ingestSlug, save: true }),
+    onSuccess: () => {
+      setIngestPreview(null);
+      setIngestSlug('');
+      qc.invalidateQueries({ queryKey: ['questions'] });
+    },
+    onError: (err: any) =>
+      setIngestError(err.response?.data?.error?.message ?? 'Failed to save question.'),
+  });
+
   const tabs = [
     { id: 'users', label: 'Team Members', icon: Users },
     { id: 'audit', label: 'Audit Trail', icon: Activity },
     { id: 'webhooks', label: 'Webhooks', icon: Webhook },
     { id: 'queues', label: 'Queue Monitor', icon: Cpu },
+    { id: 'ingestion', label: 'Import Questions', icon: Download },
   ] as const;
 
   return (
@@ -467,6 +512,106 @@ export default function AdminPage() {
             <div style={{ marginTop: 16, fontSize: 11, color: 'var(--color-text-muted)' }}>
               Telemetry timestamp: {queueStats?.timestamp ? new Date(queueStats.timestamp).toLocaleTimeString() : '—'} (Auto-refreshes every 5s)
             </div>
+          </div>
+        )}
+
+        {/* Ingestion Tab */}
+        {activeTab === 'ingestion' && (
+          <div className="card animate-fade-in animate-delay-1">
+            <div className="card-title">
+              <Download size={16} style={{ display: 'inline', marginRight: 8 }} />
+              Import Questions From LeetCode / GeeksforGeeks
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 20 }}>
+              Pull a real problem statement by its URL slug and stage it as a <code>DRAFT</code> in
+              the question bank. Ingested questions have no optimal/brute-force solution yet — use
+              the Review page to complete or regenerate them before validating.
+            </p>
+
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Platform</label>
+                <select
+                  className="form-select"
+                  style={{ width: 160 }}
+                  value={ingestPlatform}
+                  onChange={(e) => setIngestPlatform(e.target.value as 'leetcode' | 'gfg')}
+                >
+                  <option value="leetcode">LeetCode</option>
+                  <option value="gfg">GeeksforGeeks</option>
+                </select>
+              </div>
+
+              <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 220 }}>
+                <label className="form-label">
+                  {ingestPlatform === 'leetcode' ? 'Problem Slug (e.g. two-sum)' : 'Article Slug'}
+                </label>
+                <input
+                  className="form-input"
+                  placeholder={ingestPlatform === 'leetcode' ? 'two-sum' : 'find-missing-number'}
+                  value={ingestSlug}
+                  onChange={(e) => setIngestSlug(e.target.value)}
+                />
+              </div>
+
+              <button
+                className="btn btn-secondary"
+                disabled={!ingestSlug || previewMutation.isPending}
+                onClick={() => previewMutation.mutate()}
+              >
+                {previewMutation.isPending ? <span className="spinner" /> : <Download size={14} />}
+                Preview
+              </button>
+            </div>
+
+            {ingestError && (
+              <div className="alert alert-error" style={{ marginBottom: 16 }}>
+                <AlertCircle size={14} />
+                <div>{ingestError}</div>
+              </div>
+            )}
+
+            {ingestPreview?.map((q) => (
+              <div
+                key={q.sourceUrl}
+                style={{
+                  background: 'var(--color-bg-secondary)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 10,
+                  padding: 16,
+                  marginBottom: 16,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>{q.title}</div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
+                      <span className="badge badge-dsa" style={{ fontSize: 10, marginRight: 6 }}>{q.difficulty}</span>
+                      {q.topic} · {q.tags.join(', ')}
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={saveIngestedMutation.isPending}
+                    onClick={() => saveIngestedMutation.mutate()}
+                  >
+                    {saveIngestedMutation.isPending ? <span className="spinner" /> : <CheckCircle2 size={14} />}
+                    Save as Draft
+                  </button>
+                </div>
+                <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 12, whiteSpace: 'pre-wrap' }}>
+                  {q.statement.length > 400 ? `${q.statement.slice(0, 400)}…` : q.statement}
+                </p>
+                <a
+                  href={q.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 12, color: 'var(--color-primary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                >
+                  <ExternalLink size={12} /> View original source
+                </a>
+              </div>
+            ))}
           </div>
         )}
       </div>

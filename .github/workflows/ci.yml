@@ -57,12 +57,40 @@ jobs:
   test:
     name: 🧪 Automated Test Suite (Vitest)
     runs-on: ubuntu-latest
+    # Credentials match docker-compose.yml and apps/api/vitest.config.ts exactly, so a
+    # test suite that starts exercising real Prisma/Redis calls behaves identically
+    # here, in local `docker compose up`, and in `vitest run` outside CI.
     env:
       NODE_ENV: test
-      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/qforge_test?sslmode=disable"
+      DATABASE_URL: "postgresql://qforge:qforge_password@localhost:5432/question_forge"
       REDIS_URL: "redis://localhost:6379"
       JWT_SECRET: "ci-cryptographically-secure-jwt-secret-key-12345"
       ENABLE_EMBEDDED_WORKERS: "false"
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: qforge
+          POSTGRES_PASSWORD: qforge_password
+          POSTGRES_DB: question_forge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qforge -d question_forge"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout Code
@@ -79,6 +107,9 @@ jobs:
 
       - name: Generate Prisma Client
         run: npm run db:generate
+
+      - name: Apply Prisma Migrations
+        run: npm run db:migrate:deploy
 
       - name: Run Vitest Suite
         run: npm run test

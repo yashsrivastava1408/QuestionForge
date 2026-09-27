@@ -1,8 +1,8 @@
 import type { Question } from '@prisma/client';
 import type { GenerationWizardConfig, ValidationPipelineResult } from '@question-forge/shared';
 import pLimit from 'p-limit';
+import { executeSandbox } from '@question-forge/sandbox';
 import { logger } from '../utils/logger.js';
-import { executeSandbox } from './sandboxService.js';
 import { runAdversarialDebate } from './agentDebateService.js';
 import { injectEdgeCases } from './edgeCaseService.js';
 

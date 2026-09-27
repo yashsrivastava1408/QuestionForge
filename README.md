@@ -26,7 +26,7 @@
 
 Question Forge is an open-source, multi-agent AI orchestration platform engineered for enterprise HR and technical recruiting organizations. It automates the generation, rigorous algorithmic validation, human-in-the-loop review, and secure export of technical interview questions (Data Structures & Algorithms, Object-Oriented Design, System Design, SQL, and Conceptual MCQs).
 
-By combining **LangGraph agentic debate**, **isolated Docker sandboxed code execution**, **decoupled BullMQ worker processes**, and **pgvector semantic deduplication**, Question Forge produces verified, hallucination-free technical assessments at enterprise scale without data loss.
+By combining a **LangGraph generate/validate retry state machine**, **isolated Docker sandboxed code execution**, **decoupled BullMQ worker processes**, and **feature-hashed semantic deduplication**, Question Forge produces verified, hallucination-free technical assessments at enterprise scale without data loss.
 
 ---
 
@@ -38,7 +38,7 @@ By combining **LangGraph agentic debate**, **isolated Docker sandboxed code exec
 - [System Architecture](#system-architecture)
 - [Core Workflows & Diagrams](#core-workflows--diagrams)
   - [1. Distributed Job Queue & SSE Progress Streaming](#1-distributed-job-queue--sse-progress-streaming)
-  - [2. Multi-Agent Adversarial Debate Pipeline](#2-multi-agent-adversarial-debate-pipeline)
+  - [2. LangGraph Generate → Validate → Retry Pipeline](#2-langgraph-generate--validate--retry-pipeline)
   - [3. High-Concurrency Sandboxed Code Execution](#3-high-concurrency-sandboxed-code-execution)
   - [4. Asynchronous Webhook Delivery Engine](#4-asynchronous-webhook-delivery-engine)
   - [5. Question Review & Lifecycle State Machine](#5-question-review--lifecycle-state-machine)
@@ -60,11 +60,12 @@ By combining **LangGraph agentic debate**, **isolated Docker sandboxed code exec
 > **Looking for in-depth architectural specifications and operational runbooks?**
 > Visit the [Question Forge Enterprise Documentation Hub (`docs/`)](./docs/README.md) for deep dives into:
 > - [System Overview & Decoupled Compute](./docs/architecture/system-overview.md)
-> - [LangGraph Multi-Agent Adversarial Debate](./docs/architecture/multi-agent-debate.md)
+> - [LangGraph Generate/Validate Retry Engine](./docs/architecture/multi-agent-debate.md)
 > - [Piston Sandboxed Code Execution & Differential Testing](./docs/architecture/sandboxed-execution.md)
+> - [Real-World Question Ingestion (LeetCode / GFG)](./docs/architecture/ingestion-pipeline.md)
 > - [BullMQ Distributed Queue & Worker Engine](./docs/architecture/queue-and-worker-engine.md)
 > - [Database Schema, ERD & Composite Indexing](./docs/database/schema-and-indexing.md)
-> - [Vector Deduplication & Semantic Search (`pgvector`)](./docs/database/vector-deduplication.md)
+> - [Feature-Hashed Vector Deduplication](./docs/database/vector-deduplication.md)
 > - [Enterprise Security Architecture Whitepaper](./docs/security/security-whitepaper.md)
 > - [Production Deployment & SRE Incident Runbook](./docs/operations/deployment-and-runbook.md)
 > - [Quantitative Scalability & Throughput Benchmarks](./docs/operations/scalability-and-benchmarks.md)
@@ -75,8 +76,8 @@ By combining **LangGraph agentic debate**, **isolated Docker sandboxed code exec
 
 ## Key Enterprise Capabilities
 
-1. **Multi-Agent Adversarial Validation Pipeline:**
-   Rather than relying on single-shot LLM prompts, Question Forge employs a LangGraph state machine where a **Generator Agent** drafts problem specifications and optimal/brute solutions, an **Adversary Agent** identifies edge-case gaps and time/space complexity flaws, and a **Judge Agent** evaluates whether the problem passes strict quality rubrics, triggering iterative rewrites on failure.
+1. **LangGraph Generate → Validate → Retry Pipeline:**
+   Rather than relying on single-shot LLM prompts, Question Forge runs every question through a real `@langchain/langgraph` `StateGraph` (`packages/ai-orchestration`): a **Generate** node drafts (or revises) the problem, and a **Validate** node judges it — sandbox differential execution for DSA problems, a cross-model LLM debate for OOPS/conceptual ones — feeding rejection feedback back into the next `Generate` call, up to 3 attempts, before the graph settles on `VALIDATED` or `FAILED`. The same engine (`runGenerateValidateGraph`) backs both the `runDsaGenerationGraph` and `runOopsDebateGraph` entry points.
 
 2. **Parallel Sandboxed Code Execution:**
    Every generated coding problem is tested in an isolated Piston container sandbox across multiple languages (Python, Java, C++, JavaScript). Edge-case suites are executed against both optimal and brute-force solutions simultaneously using concurrency-capped worker pools (`p-limit`), slashing validation latency by over 10×.
@@ -93,8 +94,8 @@ By combining **LangGraph agentic debate**, **isolated Docker sandboxed code exec
 6. **Independent Asynchronous Webhook Delivery:**
    Approved questions and exported papers trigger outbound webhook notifications to customer ATS/LMS platforms. Deliveries are decoupled from HTTP request loops, signed with cryptographic HMAC-SHA256 signatures, and backed by a 5-tier exponential backoff retry mechanism.
 
-7. **Algorithmic Semantic Deduplication (`pgvector`):**
-   Every approved question is embedded into high-dimensional vector space stored in PostgreSQL via the `pgvector` extension. Prior to final insertion, cosine similarity calculations (< 0.85 threshold) prevent duplicate problems and cross-assessment question leakage.
+7. **Deterministic Feature-Hashed Deduplication:**
+   Every candidate statement is embedded via 32-bit FNV-1a feature hashing into a 256-dimensional, L2-normalized vector (`deduplicationService.ts`) — no embedding API call, no network dependency. Cosine similarity (dot product of normalized vectors) is computed in application code against an organization's most recent 300 questions; anything ≥ 0.88 similarity is rejected as a duplicate. Postgres runs on the `pgvector`-enabled image so a future migration to native in-database ANN search is a schema change away, not a rewrite — that migration hasn't been made yet, so today's dedup is application-level, not a `pgvector` index query.
 
 8. **Hardened Multi-Tenancy & Zero-Trust Security:**
    - Stateless JWT tokens paired with an **instant Redis JTI Revocation Blacklist** on logout.
@@ -106,11 +107,14 @@ By combining **LangGraph agentic debate**, **isolated Docker sandboxed code exec
 9. **Enterprise Monorepo Pipeline (Turborepo 2.x):**
    Coordinated monorepo task orchestration across `apps/*` and `packages/*` with deterministic caching, topological dependency graph execution, and sub-10ms incremental build checks.
 
-10. **Automated Testing Suite (Vitest + Supertest):**
-    Integrated automated unit and integration tests covering deep health probes, vector deduplication boundary mathematics, Zod schema validation, and RBAC authorization without requiring live external services.
+10. **Automated Testing Suite (Vitest + Testing Library + Supertest):**
+    48 tests across all 5 workspaces — the LangGraph retry engine, the Piston sandbox client, the LeetCode/GFG ingestion adapters, API controllers/services, and frontend pages — run without any live Postgres/Redis/LLM dependency. See [Automated Testing Suite](#automated-testing-suite-vitest) below.
 
 11. **Live Bull Board Queue Monitoring (`/admin/queues`):**
     Embedded `@bull-board/express` dashboard protected by admin JWT authentication. Allows operations teams to inspect active and completed generation jobs, view failure stack traces, retry dead-letter jobs with 1-click, and monitor webhook delivery backoffs in real time.
+
+12. **Real-World Question Ingestion (LeetCode / GeeksforGeeks):**
+    `packages/ai-orchestration` and `packages/sandbox` cover generation and execution; `packages/ingestion` covers sourcing real problems. `POST /api/ingestion/fetch` (single problem by slug) and `POST /api/ingestion/fetch-category` (a LeetCode tag, batched) pull a real statement and stage it as a `DRAFT` question — exposed in the Admin console's **Import Questions** tab — for a reviewer to complete or regenerate solutions for, distinct from the AI generation pipeline.
 
 ---
 
@@ -122,11 +126,12 @@ By combining **LangGraph agentic debate**, **isolated Docker sandboxed code exec
 | **Frontend SPA** | React 18, TypeScript 5.4, Vite, Tailwind CSS, Lucide Icons, TanStack React Query, React Router |
 | **API Server** | Node.js (v20+), Express.js, Layered Controllers, TypeScript, Zod Schema Validation |
 | **Dedicated Worker** | Standalone BullMQ Worker runtime (`worker.ts`) with graceful `SIGTERM`/`SIGINT` draining |
-| **AI Orchestration** | LangGraph State Machines, OpenAI SDK, Anthropic SDK, Google Gen AI SDK |
-| **Automated Testing** | Vitest, Supertest, In-memory Redis/DB mocks |
+| **AI Orchestration** | `@langchain/langgraph` `StateGraph` (`packages/ai-orchestration`), OpenAI SDK, Anthropic SDK, Google Gen AI SDK |
+| **Question Ingestion** | `packages/ingestion` — LeetCode GraphQL + GFG/Cheerio adapters |
+| **Automated Testing** | Vitest, Testing Library, Supertest, In-memory Redis/DB mocks |
 | **Queues & Caching** | Redis 7, BullMQ (Independent Generation & Webhook queues), ioredis |
-| **Database & Vector** | PostgreSQL 16, Prisma ORM, `pgvector` extension, Composite B-Tree & IVFFlat Indexes |
-| **Execution Sandbox** | Piston (Isolated Docker containers with 512MB RAM / 0.75 CPU quota per instance) |
+| **Database & Vector** | PostgreSQL 16 (`pgvector`-enabled image), Prisma ORM, Composite B-Tree Indexes; deduplication vectors currently compared in application code (see [Key Enterprise Capabilities](#key-enterprise-capabilities)) |
+| **Execution Sandbox** | Piston (Isolated Docker containers with 512MB RAM / 0.75 CPU quota per instance), shared client in `packages/sandbox` |
 | **PDF & Export** | Puppeteer (Headless Chromium with HTML entity escaping), AWS S3 SDK |
 | **Infrastructure & IaC** | Docker Compose, Terraform (AWS EC2, RDS, ElastiCache, S3), GitHub Actions CI/CD |
 
@@ -146,17 +151,16 @@ question-forge/
 │   │   │   │   ├── analyticsController.ts  # Cached metrics & export breakdowns
 │   │   │   │   ├── authController.ts       # Registration, login, Redis JTI blacklist
 │   │   │   │   ├── exportController.ts     # S3 PDF/JSON generation & presigned URLs
+│   │   │   │   ├── ingestionController.ts  # LeetCode/GFG ingestion -> DRAFT questions
 │   │   │   │   ├── papersController.ts     # Assessment bundle management
 │   │   │   │   ├── questionsController.ts  # CRUD, reviews, history snapshots
 │   │   │   │   └── webhooksController.ts   # ATS/LMS HMAC webhook configurations
 │   │   │   ├── routes/                     # Slim HTTP Route Delegators
 │   │   │   ├── middleware/                 # Auth, RBAC, Redis rate limiters, validation
-│   │   │   ├── queues/                     # BullMQ generation & webhook queue definitions
-│   │   │   ├── workers/                    # BullMQ job processors & debate runners
-│   │   │   ├── __tests__/                  # Vitest Automated Test Suite
-│   │   │   │   ├── authValidation.test.ts  # Zod schema & registration tests
-│   │   │   │   ├── deduplication.test.ts   # Vector cosine similarity unit tests
-│   │   │   │   └── health.test.ts          # Liveness & readiness probe tests
+│   │   │   ├── services/                   # generationService, validationService, llmService,
+│   │   │   │                               # agentDebateService, deduplicationService, ...
+│   │   │   ├── queues/                     # BullMQ generation & webhook queues + workers
+│   │   │   ├── __tests__/                  # Vitest Automated Test Suite (6 files, 26 tests)
 │   │   │   ├── index.ts                    # HTTP server entry point (stateless in prod)
 │   │   │   └── worker.ts                   # Standalone BullMQ Worker process entry point
 │   │   ├── vitest.config.ts                # Vitest test runner configuration
@@ -165,21 +169,34 @@ question-forge/
 │   └── frontend/                           # Client-side React 18 SPA
 │       ├── src/
 │       │   ├── components/                 # Reusable UI component library
-│       │   ├── pages/                      # Generator, Review, Papers, Analytics views
-│       │   ├── services/                   # Axios API clients & SSE listeners
-│       │   └── types/                      # Frontend TypeScript interfaces
+│       │   ├── pages/                      # Generator, Review, Papers, Analytics, Admin views
+│       │   ├── context/                    # AuthContext (JWT session state)
+│       │   └── *.test.tsx                  # Vitest + Testing Library component tests
+│       ├── vitest.config.ts                # Vitest + jsdom test runner configuration
 │       ├── vite.config.ts                  # Vite bundler configuration
 │       └── Dockerfile                      # Production Nginx container image
 │
 ├── packages/
-│   └── shared/                             # Monorepo Shared Package
-│       ├── prisma/
-│       │   ├── schema.prisma               # Canonical DB schema (Postgres + pgvector)
-│       │   ├── seed.ts                     # Database seeding script (Admin/Reviewer)
-│       │   └── migrations/                 # Versioned SQL migration history
-│       └── src/
-│           ├── types/                      # Shared domain types & Zod contracts
-│           └── index.ts                    # Package export entry point
+│   ├── shared/                             # Domain types, Zod contracts, Prisma schema
+│   │   ├── prisma/
+│   │   │   ├── schema.prisma               # Canonical DB schema
+│   │   │   ├── seed.ts                     # Database seeding script (Admin/Reviewer)
+│   │   │   └── migrations/                 # Versioned SQL migration history
+│   │   └── src/types/                      # Shared domain types & Zod contracts
+│   │
+│   ├── ai-orchestration/                   # Real LangGraph engine (StateGraph + Annotation)
+│   │   └── src/graphs/
+│   │       ├── generateValidateGraph.ts    # The actual state machine (generate -> validate -> retry)
+│   │       ├── dsaGenerationGraph.ts       # Typed wrapper for DSA questions
+│   │       └── oopsDebateGraph.ts          # Typed wrapper for OOPS/conceptual questions
+│   │
+│   ├── sandbox/                            # Piston client — the single source of truth,
+│   │   └── src/pistonClient.ts             # imported by apps/api, not duplicated
+│   │
+│   └── ingestion/                          # Real-world problem sourcing
+│       └── src/adapters/
+│           ├── leetcode.ts                 # LeetCode GraphQL adapter (single + by-category)
+│           └── gfg.ts                      # GeeksforGeeks/Cheerio adapter
 │
 ├── infra/
 │   └── terraform/                          # Production AWS Infrastructure as Code
@@ -188,6 +205,7 @@ question-forge/
 │
 ├── .github/
 │   └── workflows/
+│       ├── ci.yml                          # Lint, typecheck, test (real Postgres+Redis), build
 │       └── deploy-backend.yml              # CI/CD: Turbo test -> Migrate -> Rolling restart
 │
 ├── docker-compose.yml                      # Local development infrastructure stack
@@ -233,10 +251,9 @@ flowchart TD
         SigDrain["Graceful SIGTERM/SIGINT\nJob Draining"]
     end
 
-    subgraph AI_Engine ["Multi-Agent AI Engine (LangGraph)"]
-        Generator["Generator Agent\n(Drafts Problem & Tests)"]
-        Adversary["Adversary Agent\n(Edge-Case Analysis)"]
-        Judge["Judge Agent\n(Consensus & Scoring)"]
+    subgraph AI_Engine ["LangGraph Generate/Validate Engine (packages/ai-orchestration)"]
+        Generate["Generate Node\n(Draft or Revise via LLM)"]
+        Validate["Validate Node\nDSA: Sandbox Diff Test\nOOPS: Cross-Model Adversary+Judge Debate"]
     end
 
     subgraph Execution ["Sandboxed Execution"]
@@ -270,8 +287,8 @@ flowchart TD
     Worker_Pods --> SigDrain
 
     Gen_Worker --> AI_Engine
-    AI_Engine --> Generator <--> Adversary
-    Adversary --> Judge
+    Generate --> Validate
+    Validate -->|"FAIL, retries left"| Generate
     Gen_Worker --> PistonPool
     Gen_Worker --> Postgres
 
@@ -293,9 +310,9 @@ sequenceDiagram
     participant API as Stateless Express API
     participant Redis as Redis 7 (BullMQ)
     participant Worker as Dedicated Worker (worker.ts)
-    participant LangGraph as LangGraph Multi-Agent
+    participant LangGraph as LangGraph Generate/Validate Graph
     participant Sandbox as Piston Sandbox (Parallel)
-    participant DB as Postgres (pgvector)
+    participant DB as Postgres
 
     User->>API: POST /api/generate (Topic, Difficulty, Langs)
     API->>Redis: Enqueue job in 'generation' queue
@@ -308,16 +325,16 @@ sequenceDiagram
     Worker->>Redis: Update BullMQ Progress (10%)
     API-->>User: event: progress { percent: 10, stage: "Drafting Problem" }
 
-    Worker->>LangGraph: Run Generator -> Adversary -> Judge debate loop
+    Worker->>LangGraph: Run generate -> validate retry loop (max 3 attempts)
     Worker->>Redis: Update BullMQ Progress (40%)
-    API-->>User: event: progress { percent: 40, stage: "Adversarial Debate" }
+    API-->>User: event: progress { percent: 40, stage: "Generating & Validating" }
 
-    Worker->>Sandbox: Execute optimal & brute-force across all languages (Parallel)
-    Sandbox-->>Worker: Execution traces & outputs verified
+    LangGraph->>Sandbox: [DSA] Execute optimal & brute-force across all languages (Parallel)
+    Sandbox-->>LangGraph: Execution traces & outputs verified
     Worker->>Redis: Update BullMQ Progress (75%)
     API-->>User: event: progress { percent: 75, stage: "Sandbox Code Execution" }
 
-    Worker->>DB: Check vector cosine similarity (< 0.85 threshold)
+    Worker->>DB: Feature-hashed cosine similarity check (>= 0.88 = duplicate)
     Worker->>DB: Persist Question with VALIDATED status
     Worker->>Redis: Mark BullMQ job COMPLETED (100%)
     API-->>User: event: completed { questionId, status: "VALIDATED" }
@@ -325,28 +342,30 @@ sequenceDiagram
 
 ---
 
-### 2. Multi-Agent Adversarial Debate Pipeline
+### 2. LangGraph Generate → Validate → Retry Pipeline
 
-The multi-agent debate guarantees that generated technical questions are free of ambiguous constraints, missing edge cases, and incorrect optimal time/space complexities:
+Every question — DSA or OOPS — runs through the same two-node `StateGraph` in `packages/ai-orchestration/src/graphs/generateValidateGraph.ts`. What differs per question type is what "validate" means:
 
 ```mermaid
 flowchart TD
-    Start([User Generation Request]) --> GenInit["Generator Agent:\nDrafts Title, Statement, Constraints"]
-    GenInit --> GenCode["Generator Agent:\nProduces Optimal + Brute-Force Solutions & Test Cases"]
-    
-    GenCode --> AdvReview["Adversary Agent:\nIdentifies Corner Cases, Hidden Traps & Flawed Bounds"]
-    
-    AdvReview --> JudgeEval{"Judge Agent Evaluation:\nMeets Rigorous Quality Rubric?"}
-    
-    JudgeEval -- "Critique / Revision Needed\n(Score < Threshold)" --> RetryCheck{"Retry Count < 3?"}
-    RetryCheck -- Yes --> FeedbackGen["Inject Feedback into State:\nForce Targeted Rewrite"]
-    FeedbackGen --> GenInit
-    
-    RetryCheck -- No --> FailState(["Mark Generation FAILED\nLog to Audit Trail"])
-    
-    JudgeEval -- "Approved\n(Consensus Reached)" --> ValidationSuite["Dispatch to Parallel Sandbox Validation"]
-    ValidationSuite --> Deduplication["pgvector Embedding Check\nOrg Deduplication"]
-    Deduplication --> SuccessState(["Question Status: VALIDATED"])
+    Start([Generation Attempt for one difficulty/type slot]) --> GenNode["Generate Node:\nLLM drafts (or, on retry, revises) the question"]
+
+    GenNode --> DupCheck{"Feature-hash cosine\nsimilarity >= 0.88?"}
+    DupCheck -- "Duplicate" --> RetryCheck
+    DupCheck -- "Novel" --> TypeSplit{"Question Type?"}
+
+    TypeSplit -- "DSA" --> Sandbox["Validate Node (DSA):\nRun optimal + brute-force across all languages\nin the Piston sandbox, cross-check outputs"]
+    TypeSplit -- "OOPS / Conceptual" --> Debate["Validate Node (OOPS):\nCross-model Adversary critique + Judge verdict\n(agentDebateService.ts, different LLM than the generator)"]
+
+    Sandbox --> Passed{"Passed?"}
+    Debate --> Passed
+
+    Passed -- "No" --> RetryCheck{"Attempt < 3?"}
+    RetryCheck -- Yes --> FeedbackGen["Feed failure/critique back into\nGraph state as revision feedback"]
+    FeedbackGen --> GenNode
+
+    RetryCheck -- No --> FailState(["Question Status: FAILED\n(single row, no orphaned retries)"])
+    Passed -- "Yes" --> SuccessState(["Question Status: VALIDATED"])
 ```
 
 ---
@@ -454,8 +473,10 @@ flowchart TD
     
     subgraph Stage1 ["Stage 1: Turborepo Monorepo CI"]
         GHA --> Install[Install Dependencies & Prisma Generate]
-        Install --> Turbo["turbo run lint build test\n(Remote / Local Caching)"]
-        Turbo --> VitestResults["Vitest Suite: 11+ Automated Tests Passed\n(Health, Deduplication, Auth)"]
+        Install --> Services["Real Postgres 16 + Redis 7\nGitHub Actions service containers"]
+        Services --> Migrate1["prisma migrate deploy"]
+        Migrate1 --> Turbo["turbo run lint build test\n(Remote / Local Caching)"]
+        Turbo --> VitestResults["Vitest Suite: 48 Automated Tests Passed\n(across all 5 workspaces)"]
     end
 
     subgraph Stage2 ["Stage 2: Zero-Downtime Rolling Deployment"]
@@ -525,7 +546,7 @@ erDiagram
         json bruteForceSolution
         json testCases
         enum status "DRAFT | VALIDATING | VALIDATED | IN_REVIEW | APPROVED | REJECTED | FAILED"
-        float_array embeddingVector "pgvector"
+        float_array embeddingVector "256-dim, app-compared"
         string organizationId FK
     }
 
@@ -581,7 +602,7 @@ Question Forge is architected for **Tier 3 Enterprise Scalability** (High-Concur
 | **Question Generation Volume** | 50,000 to 250,000 questions / day | Sustained via BullMQ distributed workers with configurable concurrency (5–15 per container). |
 | **Stateless API Ingestion** | 3,000+ HTTP requests / sec | Sustained across 4 stateless Node.js replicas behind AWS ALB without Event Loop lag. |
 | **Sandbox Execution Latency** | Sub-1.5s parallel execution | 10 concurrent `p-limit` execution slots per worker against Piston Docker containers. |
-| **Vector Search Latency** | Sub-15ms cosine similarity | Executed across 1,000,000+ questions using PostgreSQL `pgvector` with IVFFlat indexing. |
+| **Deduplication Latency** | Sub-15ms cosine similarity per candidate | In-application dot product against an org's most recent 300 embeddings — deliberately bounded, not a full-table scan; migrating to a native `pgvector` ANN index (ivfflat/HNSW) is the natural next step past that scale (see [Roadmap](#roadmap--future-extensions)). |
 | **Webhook Delivery Throughput** | 500+ dispatches / sec | Decoupled BullMQ worker queue with 10 concurrent HTTP sockets and HMAC signing. |
 | **Analytics Query Latency** | Sub-5ms response time | Two-tier Redis caching with 60s/120s TTL and instantaneous write-through invalidation. |
 | **Crash Recovery (RTO / RPO)** | Sub-5s job resumption | Redis AOF persistence and BullMQ stalled job locks ensure zero job loss on node crashes. |
@@ -670,6 +691,12 @@ flowchart LR
 | `POST` | `/api/papers` | Create assessment paper bundle | Bearer |
 | `POST` | `/api/export/:paperId` | Export to S3 (JSON, Candidate PDF, Internal PDF) | Bearer |
 
+### Question Ingestion (LeetCode / GeeksforGeeks)
+| Method | Endpoint | Description | Auth |
+|---|---|---|---|
+| `POST` | `/api/ingestion/fetch` | Fetch one problem by `{ platform, slug }`; `save: true` persists it as a `DRAFT` question | Admin |
+| `POST` | `/api/ingestion/fetch-category` | Fetch up to `limit` LeetCode problems tagged with a category | Admin |
+
 ### Analytics & System Administration
 | Method | Endpoint | Description | Auth |
 |---|---|---|---|
@@ -687,23 +714,26 @@ flowchart LR
 
 ## Automated Testing Suite (Vitest)
 
-Question Forge includes automated unit and integration tests powered by **Vitest** and **Supertest**:
+**48 tests across all 5 workspaces**, powered by **Vitest**, **Testing Library**, and **Supertest** — none require a live Postgres, Redis, or LLM provider:
 
 ```bash
-# Run all tests across the monorepo via Turborepo
+# Run every workspace's tests via Turborepo
 npm run test
 
-# Run tests in the API package directly
+# Run one workspace directly
 npm run test --workspace=apps/api
 
 # Run Vitest in interactive watch mode for TDD
 npx vitest --workspace=apps/api
 ```
 
-### Test Coverage Highlights
-- **Health Probes (`health.test.ts`):** Validates both `/health` and reverse-proxy aliased `/api/health` HTTP 200 responses and version metadata.
-- **Vector Deduplication (`deduplication.test.ts`):** Tests cosine similarity mathematical boundaries (identical = 1.0, orthogonal = 0.0, opposite = -1.0) and threshold acceptance criteria (< 0.85).
-- **Authentication & Zod Contracts (`authValidation.test.ts`):** Verifies registration validation schemas, password complexity requirements, email formats, and role-based access control.
+| Workspace | Tests | Covers |
+|---|---|---|
+| `packages/ai-orchestration` | 4 | The real LangGraph retry state machine — first-attempt pass, feedback-driven retry, exhausting `maxAttempts`, both named wrappers sharing one engine |
+| `packages/sandbox` | 4 | Piston client: stdout/exitCode mapping, `SIGKILL` → `timedOut`, network-failure fallback, the 3s `run_timeout` cap |
+| `packages/ingestion` | 8 | LeetCode GraphQL parsing + by-category batching, GFG/Cheerio HTML parsing, graceful `null` on 404/network errors |
+| `apps/api` | 26 | Health probes, Zod auth schemas, feature-hash cosine similarity math, edge-case injection, `buildDifficultyPlan`/`buildQuestionData`, and the ingestion controller (preview vs. save, 404 on a missing source, invalid-platform rejection) |
+| `apps/frontend` | 6 | Login form (render, autofill, submit, error state) and the Admin "Import Questions" tab (preview → save flow, error state) |
 
 ---
 
@@ -714,7 +744,7 @@ npx vitest --workspace=apps/api
 | `DATABASE_URL` | PostgreSQL connection string (`?connection_limit=5` for replicas) | `postgresql://user:pass@localhost:5432/qforge` |
 | `REDIS_URL` | Redis instance for BullMQ queues, rate limiting, and cache | `redis://localhost:6379` |
 | `JWT_SECRET` | Secret key for signing JSON Web Tokens | `your-cryptographically-secure-secret` |
-| `ENCRYPTION_KEY` | 64-character hexadecimal key for encrypting BYOK API keys | `a1b2c3d4e5...` |
+| `ENCRYPTION_KEY` | Reserved for per-org BYOK key encryption (`Organization.llmApiKeysEncrypted`) — schema-ready, not yet wired into `llmService.ts`; see [security whitepaper](./docs/security/security-whitepaper.md#5-bring-your-own-key-byok-schema-ready-not-yet-implemented) | `a1b2c3d4e5...` |
 | `ENABLE_EMBEDDED_WORKERS` | Controls whether HTTP server spawns embedded workers (`true` for local dev, `false` for prod) | `true` (dev) / `false` (prod) |
 | `OPENAI_API_KEY` | Optional: OpenAI API Key for GPT-4o | `sk-...` |
 | `ANTHROPIC_API_KEY` | Optional: Anthropic API Key for Claude 3.5 Sonnet | `sk-ant-...` |
@@ -816,9 +846,10 @@ Question Forge is designed according to **12-Factor App principles** for horizon
 
 ## Roadmap & Future Extensions
 
+- **Native `pgvector` ANN Search:** Migrate `Question.embeddingVector` from a plain `Float[]` compared in application code to a real `vector` column with an ivfflat/HNSW index, so deduplication scales past a few hundred questions per organization without widening the in-app scan window.
 - **SSO SAML 2.0 & OIDC:** Native enterprise Okta, Google Workspace, and Microsoft Azure AD single sign-on integration.
-- **Additional Language Runtimes:** Out-of-the-box support for Go, Rust, C#, and Ruby sandboxes.
-- **Custom Agent Fine-Tuning:** LoRA adapters for fine-tuning the Generator and Adversary agents on customer-specific historical question banks.
+- **Additional Language Runtimes:** Out-of-the-box support for Go, Rust, C#, and Ruby sandboxes (Piston already supports them; the ingestion/generation prompts currently target Python/Java/C++/JavaScript).
+- **Custom Agent Fine-Tuning:** LoRA adapters for fine-tuning the generation and adversary prompts on customer-specific historical question banks.
 
 ---
 

@@ -15,7 +15,7 @@ $$\begin{array}{|l|l|}
 \text{Daily Generation Capacity} & \mathbf{50,000\text{ to }250,000\text{ validated questions / day}} \\
 \text{Stateless HTTP Ingestion} & \mathbf{3,000+\text{ requests / second sustained}} \\
 \text{Parallel Sandbox Latency} & \mathbf{< 1.5\text{ seconds across 4 languages (10 slots)}} \\
-\text{Vector Nearest-Neighbor Search} & \mathbf{< 15\text{ ms across 1,000,000+ vector records}} \\
+\text{Deduplication Check} & \mathbf{< 15\text{ ms per candidate, app-level over the org's latest 300 questions}} \\
 \text{Webhook Delivery Speed} & \mathbf{500+\text{ dispatches / second with HMAC signing}} \\
 \text{Cached Analytics Query Response} & \mathbf{< 5\text{ ms (Redis cached metrics)}} \\
 \hline

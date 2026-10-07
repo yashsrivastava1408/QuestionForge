@@ -1,103 +1,93 @@
-# Sandboxed Code Execution Engine
+# Sandboxed Code Execution & Differential Validation
 
-This document details the security architecture, concurrency mechanics, and differential validation protocol of the **Question Forge Sandboxed Code Execution Engine**.
-
----
-
-## 1. Threat Model & Sandboxing Requirements
-
-Executing untrusted, AI-generated code introduces critical security risks:
-- **Remote Code Execution (RCE)**: Malicious or hallucinated code attempting system calls (`rm -rf /`, `fork()` bombs).
-- **Network Exfiltration**: Code establishing outbound socket connections to exfiltrate database credentials or AWS IAM instance profiles.
-- **Resource Exhaustion**: Infinite loops (`while (true)`) or memory bloat consuming host RAM and crashing adjacent services.
-
-To mitigate these threats, Question Forge executes all compilation and runtime evaluation within **Piston**, a hardened, containerized code execution engine isolated from host processes.
+How LLM-written code is run, and how running it turns a draft coding question into a verified one.
 
 ---
 
-## 2. Container Isolation & Security Boundaries
+## 1. Running untrusted code
+
+Everything goes through one function, `executeSandbox` (`packages/sandbox/src/index.ts`). It takes a language, source code and stdin, and returns stdout, stderr, the exit code, whether the run timed out, and — importantly — `infraError`.
+
+| Driver (`SANDBOX_DRIVER`) | What it is | When to use it |
+|---|---|---|
+| `piston` (default) | HTTP calls to a [Piston](https://github.com/engineer-man/piston) container. 3 s run limit, 10 s compile limit, 128 MB per run. | Always, outside of local development. |
+| `local` | Plain child processes on the host using installed toolchains (`python3`, `node`, `g++`, `javac`, `sqlite3`). **No isolation at all.** | Development and tests without Docker. The API and worker refuse to start with it when `NODE_ENV=production`. |
+
+Piston needs these runtimes installed: `python`, `java`, `gcc` (for `cpp`), `node` (for `javascript`) and `sqlite3` (for SQL questions).
+
+### Isolation of the Piston container (`docker-compose.yml`)
+
+- Its own Docker network (`qforge-sandbox`) with no route to Postgres. Set `internal: true` on that network in production so it has no outbound internet either.
+- `no-new-privileges`, 512 MB memory cap, 0.75 CPU, `nofile` limit of 1024, job directory on `tmpfs`.
+
+### An outage is not a wrong answer
+
+If Piston is unreachable, returns a non-2xx status, or does not know the runtime, the result has `infraError: true`. The validator turns that into a `SandboxUnavailableError`, which **fails the job so the queue retries it**. It is never reported to the LLM as "your solution is wrong" — that would burn three attempts rewriting code that was fine.
+
+A compile failure is the opposite case: it *is* the code's fault, and the compiler output is returned so the model can fix it.
+
+A **timeout** is retried once before it counts. On a busy sandbox host a correct program can occasionally miss the 3 s limit; one extra run is much cheaper than rejecting a good draft. The exception is the brute-force run on the maximum-size input, where a timeout is the expected result.
+
+## 2. Differential validation of a coding question
+
+`validateCodeQuestion` in `apps/api/src/services/validationService.ts`. The draft supplies, per requested language, an **optimal** solution and a **brute-force** solution — both complete programs that read stdin and print the answer — plus hand-written test cases and an **input generator**.
 
 ```mermaid
 flowchart TD
-    subgraph Host ["Host Instance / Docker Host"]
-        Worker["Question Forge Worker Process"]
-        
-        subgraph PistonDaemon ["Piston Daemon (Port 2000)"]
-            Scheduler["Job Queue & Process Forker"]
-        end
-
-        subgraph ContainerSandbox ["Ephemeral Execution Jail (Per Test Run)"]
-            cgroups["Linux cgroups:\n- Memory Limit: 512MB\n- CPU Quota: 0.75 vCPU\n- Process Cap (PIDs): 64"]
-            seccomp["seccomp Profile:\n- Block socket(), bind(), connect()\n- Block ptrace(), mount()"]
-            namespace["Namespaces (CLONE_NEWNET, CLONE_NEWPID)"]
-            fs["Read-Only Root Filesystem + Ephemeral /tmp (64MB)"]
-        end
-    end
-
-    Worker -->|HTTP POST /api/v2/execute| Scheduler
-    Scheduler -->|Spawn Sandboxed Child| ContainerSandbox
-    ContainerSandbox -->|stdout / stderr / exit code| Scheduler
-    Scheduler -->|JSON Execution Result| Worker
+    A["1. Build inputs\nlisted cases + generator: 12 small, 4 edge, 1 large"] --> B["2. Oracle\nrun brute force (first language) on every input"]
+    B --> C["3. Differential test\noptimal in every language + brute force in the other languages\nmust print exactly what the oracle printed"]
+    C --> D["4. Stated outputs\ncompare the LLM's hand-written expected outputs with the oracle"]
+    D --> E["5. Max-size run\noptimal must finish in 3 s in every language;\nbrute force must be clearly slower"]
+    E --> F["6. Independent solver\na second model solves it from the statement alone;\nits program must print the same answers"]
+    F --> OK(["pass: store test cases with EXECUTED outputs"])
 ```
 
-### Key Security Controls
-1. **Network Namespace Isolation (`CLONE_NEWNET`)**: Containers operate without network interfaces (loopback disabled or firewalled). Sockets cannot be created.
-2. **Resource Throttling (Linux cgroups)**:
-   - **RAM Ceiling**: Hard cap at **512 MB**. Any test allocating beyond this limit is immediately terminated via an `OOMKilled` signal.
-   - **CPU Time Quota**: Max **0.75 vCPU** core allocation.
-   - **Wall-Clock Execution Timeout**: 3.0 seconds maximum. Any process exceeding this duration is killed with `SIGKILL`.
-3. **Restricted System Calls (`seccomp`)**: High-risk system calls (`clone`, `mount`, `ptrace`, `chroot`) are forbidden.
-4. **Unprivileged User Execution**: Code runs under an unprivileged `piston` UID (`1000:1000`) with no `sudo` or setuid privileges.
+**1. Inputs.** The generator is a Python program. Given `"<seed> <mode>"` on stdin it prints one valid input: `small` (tiny sizes, so brute force is instant and ties are common), `edge` (boundary shapes) or `large` (maximum constraints, worst case for brute force). Counts come from `VALIDATION_RANDOM_CASES` (12) and `VALIDATION_EDGE_CASES` (4). A generator that crashes or prints nothing fails the draft.
 
----
+**2. Oracle.** The brute force in the first requested language is run on every non-large input. Its outputs are the source of truth. If it crashes, times out, or prints nothing, the draft fails with the offending input.
 
-## 3. High-Concurrency Parallel Execution (`p-limit`)
+**3. Differential test.** Every other program must reproduce the oracle exactly (trailing whitespace ignored, nothing else). A disagreement fails the draft and the report names the solution, the input, and both outputs.
 
-### Legacy Sequential Anti-Pattern
-In naive implementations, a question with 4 target languages and 25 test cases is evaluated sequentially:
-$$\text{Total Calls} = 4 \times 25 = 100 \text{ synchronous executions}$$
-At an average of $250\text{ms}$ per compile-and-run cycle, total validation takes:
-$$100 \times 0.25\text{s} = 25.0 \text{ seconds (blocking HTTP)}$$
+**4. Stated outputs.** The hand-written `expectedOutput` values are the model's mental arithmetic, so they are compared with what the code printed:
 
-### Question Forge Concurrency Semaphore
-Question Forge flattens all language-and-test combinations into a concurrent task pool managed by a `p-limit` semaphore (default concurrency: **10**):
+| Situation | Result |
+|---|---|
+| A case marked `isSample` (it appears in the statement) disagrees | **Fail** — the statement's own example would be wrong. |
+| More than 25 % of stated outputs disagree | **Fail** — the solutions probably solve a different problem. |
+| A few non-sample cases disagree | Corrected from execution; counted in `stats.expectedOutputCorrections`. |
+| Re-validating a human edit (`trustStatedOutputs`) | **Any** disagreement fails — the reviewer's values are the intent. |
 
-```mermaid
-flowchart LR
-    Batch["Batch Payload:\n4 Languages × 25 Test Cases\n= 100 Sub-Executions"] --> Semaphore{"p-limit Semaphore\n(Max 10 Simultaneous)"}
-    
-    Semaphore --> Slot1["Slot 1: Python Test 1"]
-    Semaphore --> Slot2["Slot 2: Java Test 1"]
-    Semaphore --> Slot3["Slot 3: C++ Test 1"]
-    Semaphore --> SlotN["Slot 10: JS Test 1"]
-    
-    Slot1 & Slot2 & Slot3 & SlotN --> PistonNodes["Piston Sandbox Pool"]
-    PistonNodes --> FastCollector["Differential Assertion Collector"]
-```
+**5. Maximum-size run.** The optimal solution runs on the `large` input in every language and must finish within the 3 s limit, with all languages agreeing. The brute force runs on the same input. If it times out, or takes at least 3× as long as the optimal solution, the complexity gap is `confirmed`. For `MEDIUM` and `HARD` questions a missing gap **fails** the draft: a "hard" problem that brute force solves at maximum size is not hard. Set `VALIDATION_ENFORCE_COMPLEXITY_GAP=false` to record the result without failing. `EASY` questions are never failed on this.
 
-**Result**: 100 executions complete in **$\sim 1.2$ to $1.8$ seconds**, representing a **$>15\times$ performance acceleration**.
+**6. Independent solver** (`blindSolveCodeQuestion`). Steps 1–5 prove the two reference solutions agree with each other. They were written by the same model in the same reply, so they can agree and still both solve a slightly different problem than the statement describes. To test the *statement*, the reviewer model is given the statement and nothing else — no solutions, no test cases — and asked for a complete program in the first requested language. That program is run on up to 20 of the verified test cases.
 
----
+| The independent program… | Verdict (`stats.blindSolver`) | Effect |
+|---|---|---|
+| prints every expected output | `agreed` | Pass. |
+| runs, but prints something different | `disagreed` | **Fail.** The report shows the input and both answers, and tells the generator to make the statement pin the answer down (tie-breaks, indexing, edge cases) or fix the solutions. |
+| is missing, does not compile, or crashes on most inputs | `inconclusive` | No effect. That says something about the solver, not the question. |
 
-## 4. Differential Testing Engine
+It costs one extra LLM call per coding question and can be switched off with `VALIDATION_BLIND_SOLVER=false`. It does not run when a human edit is re-validated (re-validating code makes no LLM call at all).
 
-Passing simple assertions is insufficient for enterprise technical recruiting. Question Forge performs **differential testing**:
-1. It executes the **optimal solution** with input $X$.
-2. It executes the **brute-force solution** with input $X$.
-3. It performs a strict equality check:
-   $$\text{Output}(\text{Optimal}, X) \equiv \text{Output}(\text{BruteForce}, X)$$
+The stored `validationResult.stats` holds the numbers: listed cases, generated cases, sandbox runs, corrections, the measured timings, and the independent solver's verdict.
 
-The real check, inlined in `apps/api/src/services/validationService.ts`'s `_validateDSA`, is the equivalent comparison run per test case across the batch described above:
+### Why this replaced the old checks
 
-```typescript
-if (optResult.exitCode !== 0 || optResult.stdout.trim() !== tc.expectedOutput.trim()) {
-  optAllPassed = false;
-}
-if (optResult.stdout.trim() !== bruteResult.stdout.trim()) {
-  crossCheckPassed = false;
-}
-```
+The previous validator appended fixed "edge cases" such as `[]` with an empty expected output and compared the program's stdout with that empty string, so most array/string/tree questions could not pass. It also asked the model for bare functions (`def solution(...)`) while feeding stdin and reading stdout, so nothing was ever printed. Both are gone: inputs now come from the question's own generator, and solutions are full programs.
 
-The HTTP call to Piston itself (`executeSandbox`) lives in `packages/sandbox/src/pistonClient.ts` — a single shared implementation imported by `apps/api`, not duplicated — and caps `run_timeout` at 3000ms server-side regardless of what a caller requests, with a 15s `AbortSignal` as a hard backstop against a hung Piston instance.
+## 3. SQL questions
 
-If outputs match across every test case for every configured language, the question passes the sandbox validation phase and moves on to the deduplication check (see [`vector-deduplication.md`](../database/vector-deduplication.md)).
+`validateSqlQuestion`. The draft supplies `ddl`, at least two `datasets` (INSERT scripts), a `referenceQuery`, and an `alternativeQuery` that solves the same problem a different way.
+
+For each dataset a fresh SQLite database gets the DDL and that dataset, and both queries run. They must both succeed and return the same rows (as an unordered set unless the draft says `orderMatters`). The example dataset must produce at least one row. The stored test cases are the datasets with the executed result.
+
+Scripts containing sqlite3 dot-commands (`.shell`, `.read`, …), `ATTACH DATABASE`, `load_extension`, `readfile` or `writefile` are rejected before anything runs.
+
+## 4. Concurrency and cost
+
+All sandbox calls of one validation share a `p-limit` pool (`SANDBOX_CONCURRENCY`, default 10). A 4-language question with ~35 inputs makes roughly 290 sandbox calls, so validation takes far longer than one LLM call and Piston capacity — not the LLM — is usually what limits throughput. Size the sandbox accordingly.
+
+## 5. Limits
+
+- The 3 s limit and the speed comparison are wall-clock and include Piston's per-call overhead, so the complexity check is coarse. It reliably separates O(n) from O(n²) at n = 10⁵; it will not separate O(n) from O(n log n).
+- The Piston driver is covered by tests with a mocked HTTP layer. All real-execution tests use the `local` driver. Run one generation against your Piston instance before relying on it.

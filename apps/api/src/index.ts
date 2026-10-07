@@ -20,6 +20,8 @@ import { connectRedis, redisClient } from './utils/redis.js';
 import { startGenerationWorker } from './queues/generationWorker.js';
 import { startWebhookWorker } from './queues/webhookQueue.js';
 import { setupBullBoard, bullBoardAuthMiddleware } from './admin/bullBoard.js';
+import { assertSecureConfig } from './utils/config.js';
+import { startMaintenance } from './services/maintenanceService.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -126,6 +128,8 @@ app.use(errorHandler);
 
 // ---- Bootstrap ----
 async function bootstrap() {
+  assertSecureConfig();
+
   // Connect Redis before starting so the queue and rate limiter are ready
   await connectRedis();
 
@@ -144,6 +148,7 @@ async function bootstrap() {
     logger.info('[API] Booting embedded BullMQ queue workers...');
     worker = startGenerationWorker();
     webhookWorker = startWebhookWorker();
+    startMaintenance();
   } else {
     logger.info('[API] Running in stateless HTTP-only mode (worker process decoupled).');
   }
@@ -183,9 +188,13 @@ async function bootstrap() {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-bootstrap().catch((err) => {
-  logger.error('Failed to bootstrap application', { error: err.message });
-  process.exit(1);
-});
+// Tests import `app` and drive it with supertest; they must not open a port,
+// connect to Redis, or start workers as a side effect of the import.
+if (process.env.NODE_ENV !== 'test') {
+  bootstrap().catch((err) => {
+    logger.error('Failed to bootstrap application', { error: err.message });
+    process.exit(1);
+  });
+}
 
 export default app;

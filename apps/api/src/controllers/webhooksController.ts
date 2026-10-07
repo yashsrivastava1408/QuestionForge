@@ -4,6 +4,8 @@ import { prisma } from '../utils/prisma.js';
 import { AppError } from '../middleware/errorHandler.js';
 import crypto from 'crypto';
 import { enqueueWebhook } from '../queues/webhookQueue.js';
+import { assertPublicHttpUrl } from '../utils/urlSafety.js';
+import { encryptSecret } from '../utils/crypto.js';
 
 export class WebhooksController {
   static async getConfig(req: Request, res: Response, next: NextFunction) {
@@ -27,11 +29,14 @@ export class WebhooksController {
   static async configure(req: Request, res: Response, next: NextFunction) {
     try {
       const { webhookUrl } = z.object({ webhookUrl: z.string().url() }).parse(req.body);
+      // SSRF guard: the server will POST to this URL, so it must be a public address.
+      await assertPublicHttpUrl(webhookUrl);
       const webhookSecret = crypto.randomBytes(32).toString('hex');
 
+      // Shown to the admin once (below); stored encrypted.
       await prisma.organization.update({
         where: { id: req.user!.organizationId },
-        data: { webhookUrl, webhookSecret },
+        data: { webhookUrl, webhookSecret: encryptSecret(webhookSecret) },
       });
 
       res.json({

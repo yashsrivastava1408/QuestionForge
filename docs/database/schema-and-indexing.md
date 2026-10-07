@@ -1,161 +1,118 @@
-# Database Schema, ERD & Indexing Strategy
+# Database Schema & Migrations
 
-This document details the PostgreSQL 16 relational data model, Prisma ORM mappings, composite indexing strategies, and migration safety guidelines for Question Forge.
+PostgreSQL 16 through Prisma. The schema is `packages/shared/prisma/schema.prisma`; this page explains the parts that are not obvious from reading it.
 
 ---
 
-## 1. Entity-Relationship Model (ERD)
+## 1. Model map
 
 ```mermaid
 erDiagram
-    ORGANIZATION ||--o{ USER : "has"
-    ORGANIZATION ||--o{ QUESTION : "owns"
-    ORGANIZATION ||--o{ PAPER : "owns"
-    ORGANIZATION ||--o{ AUDIT_LOG : "records"
-
-    USER ||--o{ QUESTION_REVIEW : "creates"
-    USER ||--o{ AUDIT_LOG : "triggers"
-
-    QUESTION ||--o{ QUESTION_HISTORY : "tracks"
-    QUESTION ||--o{ QUESTION_REVIEW : "receives"
-    QUESTION ||--o{ PAPER_QUESTION : "included_in"
-
-    PAPER ||--o{ PAPER_QUESTION : "contains"
-    PAPER ||--o{ EXPORT_RECORD : "exports"
-
-    ORGANIZATION {
-        string id PK "cuid / uuid"
-        string name "Organization Name"
-        string slug UK "URL-friendly identifier"
-        json llmApiKeysEncrypted "AES-256-GCM BYOK"
-        int maxQuestionsPerDay "Quota"
-        string webhookUrl "Outbound ATS/LMS endpoint"
-        string webhookSecret "HMAC signing secret"
-        datetime createdAt
-    }
-
-    USER {
-        string id PK
-        string email UK
-        string name
-        enum role "ADMIN | REVIEWER | GENERATOR"
-        string passwordHash "bcrypt (cost factor 10)"
-        string organizationId FK
-        datetime createdAt
-    }
-
-    QUESTION {
-        string id PK
-        enum type "DSA | OOPS | SYSTEM_DESIGN | SQL | MCQ"
-        enum difficulty "EASY | MEDIUM | HARD"
-        string topic
-        string title
-        text statement
-        json optimalSolution
-        json bruteForceSolution
-        json testCases
-        enum status "DRAFT | VALIDATING | VALIDATED | IN_REVIEW | APPROVED | REJECTED | FAILED"
-        float_array embeddingVector "256-dim FNV-1a hash, app-compared"
-        string organizationId FK
-        datetime createdAt
-        datetime updatedAt
-    }
-
-    QUESTION_HISTORY {
-        string id PK
-        string questionId FK
-        int version "Incrementing counter"
-        json snapshot "Full previous state"
-        string editedById FK
-        datetime createdAt
-    }
-
-    QUESTION_REVIEW {
-        string id PK
-        string questionId FK
-        string reviewerId FK
-        enum decision "APPROVED | REJECTED"
-        text note
-        datetime createdAt
-    }
-
-    PAPER {
-        string id PK
-        string title
-        json config "Timer, instructions, pass mark"
-        string organizationId FK
-        datetime createdAt
-    }
-
-    PAPER_QUESTION {
-        string id PK
-        string paperId FK
-        string questionId FK
-        int orderIndex
-    }
-
-    EXPORT_RECORD {
-        string id PK
-        string paperId FK
-        enum format "JSON | PDF_CANDIDATE | PDF_INTERNAL"
-        string s3Url
-        string signedToken UK
-        datetime expiresAt
-        datetime createdAt
-    }
-
-    AUDIT_LOG {
-        string id PK
-        string organizationId FK
-        string userId FK
-        enum action "LOGIN | GENERATE | REVIEW | EXPORT | ..."
-        json metadata
-        string ipAddress
-        datetime createdAt
-    }
+    ORGANIZATION ||--o{ USER : has
+    ORGANIZATION ||--o{ QUESTION : owns
+    ORGANIZATION ||--o{ PAPER : owns
+    ORGANIZATION ||--o{ GENERATION_BATCH : requests
+    ORGANIZATION ||--o{ AUDIT_LOG : records
+    GENERATION_BATCH ||--|{ GENERATION_ITEM : contains
+    GENERATION_ITEM }o--o| QUESTION : produces
+    QUESTION ||--o{ QUESTION_HISTORY : versions
+    QUESTION ||--o{ QUESTION_REVIEW : receives
+    QUESTION ||--o{ PAPER_QUESTION : "placed in"
+    PAPER ||--o{ PAPER_QUESTION : contains
+    PAPER ||--o{ EXPORT_RECORD : exports
+    USER ||--o{ QUESTION_REVIEW : writes
 ```
 
----
+## 2. Notable columns
 
-## 2. Composite Indexing Strategies
+### `Organization`
+| Column | Meaning |
+|---|---|
+| `maxQuestionsPerDay` | Daily quota of requested question slots (default 200). |
+| `webhookSecret` | AES-256-GCM ciphertext (`enc:v1:…`). |
+| `llmApiKeysEncrypted` | JSON map `provider → ciphertext` of the organization's own LLM keys. |
 
-In multi-tenant systems, executing queries without composite tenant indexes results in full table scans across all organizations. Question Forge implements high-selectivity composite indexes:
+### `User`
+| Column | Meaning |
+|---|---|
+| `isActive` | `false` = deactivated: cannot log in, and tokens already issued are rejected. |
 
-### 1. `@@index([organizationId, status])` on `Question`
-- **Use Case**: Filtering candidate review pools (`GET /api/questions?status=IN_REVIEW`).
-- **Optimization**: Postgres performs an Index Scan on `organizationId` and immediately evaluates `status` in the index leaf without loading table rows.
+### `Question`
+| Column | Meaning |
+|---|---|
+| `type` | `DSA`, `OOPS`, `SYSTEM_DESIGN`, `SQL`, `CONCEPTUAL`, `MCQ`. |
+| `status` | `DRAFT` (imported, not validated) → `VALIDATING` → `VALIDATED` → `APPROVED` / `REJECTED`, or `FAILED`. |
+| `optimalSolution`, `bruteForceSolution` | JSON. For DSA: `{ "<language>": "<complete program>" }`. For SQL: `{ "sql": "<query>" }`. |
+| `testCases` | JSON array of `{ input, expectedOutput, label, isSample?, isEdgeCase? }`. After validation the outputs are the **executed** ones, and generated cases are included. |
+| `validationAssets` | What validation needs to run again: `{ inputGenerator }` for DSA, `{ sqlDdl, sqlDatasets, orderMatters }` for SQL, `{ requirements, rubric }` for system design. |
+| `validationResult` | The last validation report: `method`, `passed`, `stages`, `stats`, `details`. |
+| `embeddingVector` | 256 floats used for lexical duplicate detection. Empty for `FAILED` and never-validated rows. See [vector-deduplication.md](./vector-deduplication.md). |
+| `retryCount` | How many times the draft was rewritten after a failed validation. |
+| `version` | Incremented on every edit; the previous state goes to `QuestionHistory`. |
 
-### 2. `@@index([organizationId, type, difficulty])` on `Question`
-- **Use Case**: Filtered search during assessment paper assembly (e.g., selecting 2 "HARD" "DSA" questions).
-- **Optimization**: Satisfies compound equality predicates in a single B-Tree traversal.
+### `GenerationBatch` and `GenerationItem`
+A batch is one request; its `id` is the public `jobId`. An item is one question slot and one BullMQ job.
 
-### 3. `@@index([questionId, version])` on `QuestionHistory`
-- **Use Case**: Fetching versioned revision history snapshots for human audit logs.
-- **Optimization**: Guarantees $O(\log N)$ lookup by question ID and sequential version scanning.
+| Column | Meaning |
+|---|---|
+| `GenerationBatch.kind` | `GENERATE`, `COMPLETE_IMPORT` or `REVALIDATE`. |
+| `GenerationBatch.inputTokens` / `outputTokens` | Measured LLM usage for the whole batch. |
+| `GenerationBatch.cancelledAt` | Set when a user cancels. Cleared if the failed items are retried. |
+| `GenerationItem.status` | `QUEUED`, `GENERATING`, `VALIDATING`, `VALIDATED`, `FAILED`. |
+| `GenerationItem.stage` | Plain-language current step, shown live in the UI. |
+| `GenerationItem.failureReason` | The validator's report, or the infrastructure error. |
+| `GenerationItem.questionId` | Set as soon as a row exists, so a retried job updates it instead of creating another. |
+| `GenerationItem.updatedAt` | Last progress. The maintenance sweeper uses it to find items that have gone quiet. |
 
----
+### `ExportRecord`
+`signedToken` + `storageKey` + `expiresAt` back the local-disk download links (used when S3 is not configured).
 
-## 3. Safe Schema Migration Protocol
+## 3. Indexes
 
-To guarantee zero downtime in CI/CD pipelines, Question Forge follows backward-compatible schema changes:
+| Index | Serves |
+|---|---|
+| `Question(organizationId, status)` | Review queue, status filters. |
+| `Question(organizationId, type, difficulty)` | Filtered search when assembling a paper. |
+| `Question(organizationId, createdAt)` | Newest-first listing and the duplicate-check scan. |
+| `AuditLog(organizationId, createdAt)`, `AuditLog(organizationId, action)` | Audit log paging and filtering. |
+| `GenerationBatch(organizationId, createdAt)` | Recent jobs list. |
+| `GenerationItem(batchId, index)` unique, `GenerationItem(questionId)` | Status reads; "is this draft already being completed?". |
 
-1. **Step 1 (Expand)**: Add new columns as nullable (`Optional` in Prisma) or with sensible defaults.
-2. **Step 2 (Deploy Code)**: Deploy API and worker containers reading from either old or new format.
-3. **Step 3 (Backfill)**: Run non-blocking background script to populate existing rows.
-4. **Step 4 (Contract)**: Apply migration adding `NOT NULL` constraint and drop deprecated columns.
+## 4. Migrations
 
-```mermaid
-flowchart LR
-    A["1. Expand\nadd nullable column"] --> B["2. Deploy Code\nold + new replicas both work\nduring a rolling deploy"]
-    B --> C["3. Backfill\nbackground script\npopulates existing rows"]
-    C --> D["4. Contract\nadd NOT NULL,\ndrop deprecated columns"]
-    D --> E(["Old and new code\nnever disagree on schema shape"])
+```
+packages/shared/prisma/migrations/
+  20260922175739_init
+  20261006000000_reconcile_schema_drift
+  20261007000000_generation_batches
+  20261008000000_accounts_and_job_controls
 ```
 
-At every step, both the pre-deploy and post-deploy container images must be able to read/write the table without erroring — that's the actual zero-downtime guarantee, not just "the migration ran fast."
+### The drift that was fixed
 
-Migrations are deployed in GitHub Actions using:
-```bash
-npx prisma migrate deploy
-```
-This applies pending migrations without attempting to generate or prompt interactively, preventing CI pipeline stalls.
+The schema had moved ahead of the `init` migration. A database built with `prisma migrate deploy` (which is what CI and the README do) was missing things the code relies on:
+
+- `MCQ` was not in the `QuestionType` enum → requesting an MCQ failed at insert.
+- `optimalSolution` and `bruteForceSolution` were `TEXT`, not `JSONB`.
+- None of the composite indexes existed.
+
+`20261006000000_reconcile_schema_drift` fixes all three. Every statement in it is a no-op when there is nothing to fix, so it is safe on a database that already matches the schema. Existing text in the two solution columns is kept, wrapped as a JSON string.
+
+`prisma migrate diff` from the migrations to the schema is now empty.
+
+### Applying them
+
+| Your database was created with… | Do this |
+|---|---|
+| `prisma migrate deploy` / `migrate dev` (has a `_prisma_migrations` table) | `npm run db:migrate:deploy` |
+| `prisma db push` (no `_prisma_migrations` table) | `npm run db:push --workspace=packages/shared` to sync it. To switch to migrations afterwards, mark all four as applied with `npx prisma migrate resolve --applied <name>`. |
+
+**Back up first.** The `generation_batches` and `accounts_and_job_controls` migrations only add tables, columns and enum values. The reconcile migration changes two column types.
+
+### Changing the schema from here
+
+1. Edit `schema.prisma`.
+2. `npm run db:migrate` (creates and applies a migration locally).
+3. Commit the migration with the code that needs it. CI applies migrations to a fresh database and runs the end-to-end suite against it, so drift like the above now fails the build.
+
+For a change that old and new code cannot both live with (dropping or renaming a column), use expand → deploy → backfill → contract across separate releases.

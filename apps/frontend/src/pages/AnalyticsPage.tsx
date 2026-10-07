@@ -4,6 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend
 } from 'recharts';
+import GenerationInsights from '../components/GenerationInsights';
 import { ShieldCheck, AlertOctagon, Database, BarChart3, PieChart as PieIcon, Layers } from 'lucide-react';
 
 const COLORS = ['#f43f5e', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ec4899', '#3b82f6'];
@@ -33,8 +34,8 @@ export default function AnalyticsPage() {
           <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 4 }}>
             <span>Console</span> / <span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Analytics</span>
           </div>
-          <h1 style={{ margin: 0 }}>Telemetry & Validation Health</h1>
-          <p style={{ margin: 0, marginTop: 4 }}>Domain topic saturation, difficulty distribution, and adversarial pass rates.</p>
+          <h1 style={{ margin: 0 }}>Analytics</h1>
+          <p style={{ margin: 0, marginTop: 4 }}>Pass rates, cost, failure reasons, and how the question bank is distributed.</p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -113,6 +114,8 @@ export default function AnalyticsPage() {
           </div>
 
         </div>
+
+        <GenerationInsights />
 
         {/* Charts Split */}
         <div className="grid-2" style={{ marginBottom: 28 }}>

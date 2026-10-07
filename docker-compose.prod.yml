@@ -5,15 +5,24 @@ version: '3.9'
 #
 # This file assumes Redis and PostgreSQL are externally managed (e.g. AWS RDS + ElastiCache).
 # Deploys stateless API replicas, dedicated BullMQ queue workers, and the frontend SPA.
+#
+# With NODE_ENV=production the API and worker REFUSE TO START unless .env has:
+#   JWT_SECRET      32+ random characters      (openssl rand -hex 32)
+#   ENCRYPTION_KEY  64 random hex characters   (openssl rand -hex 32)
+# and neither ALLOW_MOCK_AUTH=true nor SANDBOX_DRIVER=local is set.
+# Exports need S3 (2 API replicas do not share a disk).
 
 services:
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    # No file watching in production (the image's default CMD is the dev watcher).
+    command: ["npm", "run", "start", "--workspace=apps/api"]
     env_file:
       - .env
     environment:
+      - NODE_ENV=production
       - ENABLE_EMBEDDED_WORKERS=false
     ports:
       - "4000:4000"
@@ -48,6 +57,8 @@ services:
     command: ["npm", "run", "start:worker", "--workspace=apps/api"]
     env_file:
       - .env
+    environment:
+      - NODE_ENV=production
     restart: always
     deploy:
       replicas: 1          # Scale independently based on BullMQ queue depth

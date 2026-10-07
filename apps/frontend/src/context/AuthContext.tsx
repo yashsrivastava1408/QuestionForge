@@ -13,13 +13,22 @@ interface AuthContextType {
   user: AuthUser | null;
   login: (email: string, password: string, orgSlug: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Swaps in a new token for the current user (after a password change retires the old one). */
+  replaceToken: (token: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+/**
+ * Dev convenience: skip the login screen and act as the seeded admin. Needs BOTH
+ * `VITE_ALLOW_MOCK_AUTH=true` here and `ALLOW_MOCK_AUTH=true` on the API, and
+ * never applies to a production build.
+ */
+const MOCK_AUTH = import.meta.env.DEV && import.meta.env.VITE_ALLOW_MOCK_AUTH === 'true';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(() => {
-    return localStorage.getItem('qf_token') ?? (import.meta.env.DEV ? 'mock-token' : null);
+    return localStorage.getItem('qf_token') ?? (MOCK_AUTH ? 'mock-token' : null);
   });
 
   const [user, setUser] = useState<AuthUser | null>(() => {
@@ -31,7 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Fall through
       }
     }
-    return import.meta.env.DEV
+    return MOCK_AUTH
       ? { id: 'mock-id', email: 'admin@demo.com', name: 'Admin Demo', role: 'ADMIN' }
       : null;
   });
@@ -76,8 +85,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [token]);
 
+  const replaceToken = useCallback((newToken: string) => {
+    setToken(newToken);
+    localStorage.setItem('qf_token', newToken);
+    axios.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ token, user, login, logout }}>
+    <AuthContext.Provider value={{ token, user, login, logout, replaceToken }}>
       {children}
     </AuthContext.Provider>
   );

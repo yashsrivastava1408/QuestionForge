@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { executeSandbox } from './pistonClient.js';
+import { executeWithPiston as executeSandbox } from './pistonClient.js';
 
 describe('executeSandbox (Piston client)', () => {
   const originalFetch = global.fetch;
@@ -40,6 +40,31 @@ describe('executeSandbox (Piston client)', () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('ECONNREFUSED');
+    // An outage must be distinguishable from "the code is wrong".
+    expect(result.infraError).toBe(true);
+  });
+
+  it('flags a non-2xx Piston response as an infra error, not a code failure', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 500, statusText: 'Internal Server Error', text: async () => 'boom',
+    }) as any;
+
+    const result = await executeSandbox({ language: 'python', version: 'latest', code: 'print(1)' });
+
+    expect(result.infraError).toBe(true);
+  });
+
+  it('returns compiler output when compilation fails', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ compile: { stdout: '', stderr: "error: expected ';'", code: 1 } }),
+    }) as any;
+
+    const result = await executeSandbox({ language: 'cpp', version: 'latest', code: 'int main(){ return 0 }' });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("expected ';'");
+    expect(result.infraError).toBeUndefined();
   });
 
   it('caps run_timeout at 3000ms even when a longer timeout is requested', async () => {

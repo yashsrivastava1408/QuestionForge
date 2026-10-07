@@ -1,51 +1,53 @@
 <div align="center">
-  <img src="./assets/hero-banner.png" alt="Question Forge Enterprise Documentation" width="100%" />
+  <img src="./assets/hero-banner.png" alt="Question Forge Documentation" width="100%" />
 
   <br />
   <br />
 
-  <h1>Question Forge Enterprise Documentation</h1>
+  <h1>Question Forge Documentation</h1>
 </div>
 
-Welcome to the technical documentation hub for **Question Forge**, an enterprise-grade multi-agent AI orchestration platform engineered for technical question generation, sandboxed validation, and assessment lifecycle management.
+Technical documentation for **Question Forge**: a tool that drafts technical interview questions with an LLM and then checks them — by running code where the question type allows it, and by independent LLM review where it does not — before a human approves them.
 
-This directory contains deep architectural specifications, data models, multi-agent workflows, security whitepapers, and operational runbooks intended for architects, systems engineers, security auditors, and DevOps teams.
+These pages describe what the code does today, including what it does not do. Where something is unverified or unbuilt, the page says so.
 
 ---
 
 ## Documentation Index
 
-### 1. Architecture Deep-Dives (`docs/architecture/`)
-- [**System Architecture Overview**](./architecture/system-overview.md)
-  *End-to-end distributed system topology, decoupled API vs. Worker processes, caching hierarchies, and fault tolerance.*
-- [**LangGraph Generate → Validate → Retry Engine**](./architecture/multi-agent-debate.md)
-  *The real `@langchain/langgraph` `StateGraph`, the generate/validate node contract, and how DSA (sandbox) and OOPS (cross-model debate) plug into the same engine.*
-- [**Sandboxed Code Execution Engine**](./architecture/sandboxed-execution.md)
-  *Piston Docker container isolation, security constraints, resource quotas, and differential testing between optimal and brute-force solutions.*
-- [**Real-World Question Ingestion**](./architecture/ingestion-pipeline.md)
-  *LeetCode/GFG adapters, the `/api/ingestion/*` endpoints, and how ingested drafts relate to the AI generation pipeline.*
-- [**Distributed Queue & Worker Engine**](./architecture/queue-and-worker-engine.md)
-  *BullMQ and Redis 7 queue mechanics, job lifecycles, concurrency tuning, stalled job recovery, and graceful shutdown signal draining.*
+### Architecture (`docs/architecture/`)
+- [**System Overview**](./architecture/system-overview.md)
+  *Processes, data stores, and how a request flows through them.*
+- [**Generate → Validate → Retry Engine**](./architecture/multi-agent-debate.md)
+  *The LangGraph loop, what "validated" means for each question type, the blind-solve review, and why it fails closed.*
+- [**Sandboxed Execution & Differential Validation**](./architecture/sandboxed-execution.md)
+  *Sandbox drivers, the five-step differential test for coding questions, SQL validation by execution.*
+- [**Queue & Worker Engine**](./architecture/queue-and-worker-engine.md)
+  *One job per question, item lifecycle, live status and SSE, retries, quotas.*
+- [**Question Ingestion**](./architecture/ingestion-pipeline.md)
+  *LeetCode / GeeksforGeeks import, and turning an imported draft into a validated question.*
 
-### 2. Database & Vector Search (`docs/database/`)
-- [**Database Schema, ERD & Indexing Strategy**](./database/schema-and-indexing.md)
-  *PostgreSQL 16 relational data model, composite B-Tree indexes, multi-tenant partitioning patterns, and zero-drift Prisma migrations.*
-- [**Feature-Hashed Vector Deduplication**](./database/vector-deduplication.md)
-  *Mathematical formulation of cosine similarity, FNV-1a feature hashing, today's application-level comparison, and the native `pgvector`/IVFFlat migration path.*
+### Database (`docs/database/`)
+- [**Schema & Migrations**](./database/schema-and-indexing.md)
+  *Models, notable columns, indexes, and how to apply the migrations to an existing database.*
+- [**Duplicate Detection**](./database/vector-deduplication.md)
+  *The lexical similarity check, the in-batch twin check, and why semantic search is not built.*
 
-### 3. Security & Governance (`docs/security/`)
-- [**Enterprise Security Architecture Whitepaper**](./security/security-whitepaper.md)
-  *Multi-tenant data isolation, stateless JWT + Redis JTI instant revocation blacklist, RBAC matrix, Zod mass-assignment protection, PDF XSS escaping, and HMAC-SHA256 webhook signatures.*
+### Security (`docs/security/`)
+- [**Security Architecture**](./security/security-whitepaper.md)
+  *Tenancy, authentication, roles, secrets at rest, webhook SSRF protection, the queue dashboard login, and the open items.*
 
-### 4. Operations & Scaling (`docs/operations/`)
-- [**Production Deployment & SRE Runbook**](./operations/deployment-and-runbook.md)
-  *Step-by-step production deployment on AWS (RDS, ElastiCache, S3, EC2/ECS), Terraform IaC instructions, zero-downtime rolling deploys, backup/restore, and incident troubleshooting.*
-- [**Quantitative Scalability Specifications & Benchmarks**](./operations/scalability-and-benchmarks.md)
-  *Empirical throughput analysis, Tier 3 Enterprise capacity benchmarks (50,000–250,000 questions/day), load testing protocols, and independent API vs. Worker autoscaling rules.*
+### Operations (`docs/operations/`)
+- [**Deployment & Runbook**](./operations/deployment-and-runbook.md)
+  *Required configuration, migrations, health probes, incident playbooks.*
+- [**Testing**](./operations/testing.md)
+  *The unit and end-to-end suites, what each proves, and what is not tested.*
+- [**Capacity Planning**](./operations/scalability-and-benchmarks.md)
+  *What limits throughput and a model to plan with. Contains no load-test results — none have been run.*
 
 ---
 
-## Architecture Summary Matrix
+## Architecture at a Glance
 
 ```mermaid
 flowchart LR
@@ -61,13 +63,13 @@ flowchart LR
 
     subgraph State ["Distributed State & Storage"]
         Redis[("Redis 7 (BullMQ, JTI, Cache)")]
-        PG[("PostgreSQL 16 + pgvector")]
-        S3[("AWS S3 Export Bucket")]
+        PG[("PostgreSQL 16")]
+        S3[("Export storage: S3 or local disk")]
     end
 
     subgraph ExternalEngine ["AI & Sandboxes"]
         LLM["LLM Providers (OpenAI, Anthropic, Gemini)"]
-        Piston["Piston Docker Sandbox Pool"]
+        Piston["Piston sandbox"]
     end
 
     ALB --> RateLimit --> API
@@ -83,4 +85,4 @@ flowchart LR
 ---
 
 ## Contributing to Documentation
-When modifying architecture, queue contracts, or database schemas, ensure that the corresponding documentation in this directory is updated in the same pull request. All Mermaid diagrams must be tested for syntax correctness.
+When you change behaviour, update the page that describes it in the same pull request. Do not document numbers you have not measured or features that are not built — mark them as such instead.

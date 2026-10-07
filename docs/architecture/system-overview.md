@@ -8,10 +8,10 @@ This document provides a comprehensive technical overview of the **Question Forg
 
 Question Forge is designed around four foundational tenets:
 
-1. **Decoupled Asynchronous Compute**: Time-intensive operations (multi-agent LLM deliberation, multi-language sandbox compilation, PDF watermarking) are strictly isolated from client HTTP request-response cycles.
-2. **Crash Resilience & State Isolation**: Neither HTTP servers nor background workers maintain in-memory state across requests or jobs. Distributed state resides entirely in **Redis 7** (job queues, token blacklists, cache) and **PostgreSQL 16** (persistent relational data and vector embeddings).
+1. **Decoupled Asynchronous Compute**: Slow work (LLM drafting and review, multi-language sandbox execution) runs in background workers — one job per question — never inside an HTTP request.
+2. **Crash Resilience & State Isolation**: Neither HTTP servers nor background workers maintain in-memory state across requests or jobs. Distributed state resides entirely in **Redis 7** (job queues, token blacklists, cache) and **PostgreSQL 16** (all persistent data, including each generation batch and its per-question progress).
 3. **Layered Monorepo Architecture**: Clean boundaries between HTTP routing, business logic orchestration, database access, and shared schemas prevent code drift while enabling atomic builds across packages via **Turborepo**.
-4. **Zero-Trust Multi-Tenancy**: Organization boundaries are cryptographically and programmatically enforced across every query, webhook delivery, and export artifact.
+4. **Tenant Isolation**: Every query filters on the `organizationId` from the caller's verified JWT. See the [security page](../security/security-whitepaper.md).
 
 ---
 
@@ -37,31 +37,31 @@ flowchart TD
     end
 
     subgraph Worker_Tier ["Dedicated Background Worker Cluster (apps/api/src/worker.ts)"]
-        W_1["Worker Pod 1\n(AI Debate + Sandbox)"]
-        W_2["Worker Pod 2\n(AI Debate + Sandbox)"]
+        W_1["Worker Pod 1\n(Draft + Validate)"]
+        W_2["Worker Pod 2\n(Draft + Validate)"]
         W_Hook["Worker Pod (Webhooks)\n(HMAC Outbound Delivery)"]
     end
 
     subgraph State_Tier ["Distributed State Layer"]
         Redis[("Redis 7 Cluster / ElastiCache\n- BullMQ 'generation' queue\n- BullMQ 'webhooks' queue\n- JTI Revocation Blacklist\n- Analytics Cache (60s TTL)\n- Distributed Rate Limit Store")]
-        Postgres[("PostgreSQL 16, pgvector-enabled image (AWS RDS)\n- Questions, Users, Papers, Reviews\n- 256-dim embeddings, compared in application code today\n- Write-Ahead Logging (WAL)")]
-        S3[("AWS S3 Export Bucket\n- Watermarked Candidate PDFs\n- Internal Rubric PDFs\n- JSON Bundles")]
+        Postgres[("PostgreSQL 16, pgvector-enabled image (AWS RDS)\n- Questions, Users, Papers, Reviews\n- Generation batches and items\n- 256-dim lexical vectors, compared in application code\n- Write-Ahead Logging (WAL)")]
+        S3[("Export storage: AWS S3\n(or local disk on a single machine)\n- Candidate PDFs\n- Internal PDFs\n- JSON Bundles")]
     end
 
     subgraph Execution_Tier ["Execution Sandbox Cluster"]
-        Piston["Piston Sandbox Pool (Docker)\n- Python 3.10, Java 17, C++ 17, Node 20\n- Strict cgroup RAM (512MB) & CPU quotas"]
+        Piston["Piston Sandbox (Docker)\n- python, java, gcc, node, sqlite3 runtimes\n- 512MB RAM and 0.75 CPU container limits"]
     end
 
     subgraph AI_Providers ["External LLM APIs"]
-        OpenAI["OpenAI (GPT-4o)"]
-        Anthropic["Anthropic (Claude 3.5 Sonnet)"]
-        Gemini["Google (Gemini 1.5 Pro/Flash)"]
+        OpenAI["OpenAI"]
+        Anthropic["Anthropic Claude"]
+        Gemini["Google Gemini"]
     end
 
-    Client -->|HTTPS / WSS| ALB
+    Client -->|HTTPS + SSE| ALB
     ALB --> API_1 & API_2 & API_N
 
-    API_1 & API_2 & API_N -->|Fast Job Enqueue sub-5ms| Redis
+    API_1 & API_2 & API_N -->|Enqueue one job per question| Redis
     API_1 & API_2 & API_N -->|Query Relational Data| Postgres
     API_1 & API_2 & API_N -->|Read/Write Presigned URLs| S3
 
@@ -69,8 +69,8 @@ flowchart TD
     Redis -->|Dequeue Webhook Deliveries| W_Hook
 
     W_1 & W_2 -->|Parallel Code Verification| Piston
-    W_1 & W_2 -->|Multi-Agent Prompts| AI_Providers
-    W_1 & W_2 -->|Persist Validated Questions & Vectors| Postgres
+    W_1 & W_2 -->|Draft and review prompts| AI_Providers
+    W_1 & W_2 -->|Persist questions and item progress| Postgres
 
     W_Hook -->|HMAC-SHA256 Signed POST| LMS
 ```
@@ -114,19 +114,19 @@ flowchart LR
 1. **Route Layer (`apps/api/src/routes/`)**:
    Pure routing definitions. Contains zero business logic, zero raw SQL queries, and zero direct queue interactions. Example:
    ```typescript
-   router.post('/register', authController.register);
-   router.post('/login', authController.login);
-   router.post('/logout', authenticate, authController.logout);
+   authRouter.post('/login', AuthController.login);
+   authRouter.post('/register', authenticate, authorize('ADMIN'), AuthController.register);
+   authRouter.post('/logout', authenticate, AuthController.logout);
    ```
 2. **Middleware Layer (`apps/api/src/middleware/`)**:
    Enforces cross-cutting concerns:
-   - `rateLimiter.ts`: Distributed Redis-backed sliding-window rate limiters.
+   - `rateLimiter.ts`: Redis-backed rate limiters shared across replicas.
    - `auth.ts`: Verifies JWT signatures and checks the token's UUID `jti` against the Redis Revocation Blacklist.
-   - `errorHandler.ts`: Catches unhandled exceptions, sanitizes stack traces, and returns standardized RFC 7807 problem payloads.
+   - `errorHandler.ts`: Turns Zod errors into `400` with field details, returns client-facing `AppError` messages as-is, and hides everything else in production.
 3. **Controller Layer (`apps/api/src/controllers/`)**:
    Parses `req.body`, `req.params`, and `req.query`, invokes domain services or Prisma client queries, and formats standard HTTP responses (`200 OK`, `202 Accepted`, `400 Bad Request`).
 4. **Service Layer (`apps/api/src/services/`)**:
-   Domain business logic: LangGraph agentic debate loops, Piston sandbox invocation, vector cosine deduplication, and S3 PDF generation.
+   Domain logic: the generate → validate loop (`generationService`), differential and SQL validation (`validationService`), LLM review (`reviewService`), prompts and draft schemas, duplicate detection, export.
 
 ---
 
@@ -135,11 +135,11 @@ flowchart LR
 ### 1. Redis BullMQ Crash Recovery
 All asynchronous jobs are serialized as JSON payloads in Redis. Each job has an associated BullMQ lock. If a worker container crashes or is abruptly terminated by AWS ECS/K8s spot eviction:
 - BullMQ's lock expires after `stalledInterval` (default 30 seconds).
-- A surviving worker identifies the stalled job, moves it back to `waiting`, and resumes execution from step 1.
-- Redis operates with **Append-Only File (AOF) persistence** (`appendfsync everysec`), ensuring zero job loss even in the event of an abrupt Redis host restart.
+- A surviving worker picks the stalled job up again. Each job is one question, and its `GenerationItem` row remembers the `questionId`, so the retry updates the same question instead of creating a duplicate; the other questions in the batch are unaffected.
+- Redis runs with append-only persistence and `maxmemory-policy noeviction` (in `docker-compose.yml`). BullMQ keeps its queues in Redis, so Redis must never evict keys; use the same policy on a managed Redis.
 
-### 2. Provider Failover & Socket Reuse
-All AI model integrations (`openai`, `anthropic`, `google-genai`) are initialized as module singletons with persistent HTTP Keep-Alive connection pools. This eliminates SSL handshake overhead ($150\text{ms}$ savings per invocation).
+### 2. Provider Errors
+LLM clients are cached per provider, model and key. Transient errors (429, 5xx, dropped connections) are retried with backoff inside the client; if they persist, the job throws and BullMQ retries it up to 3 times before the item is marked `FAILED` with the reason. There is no automatic switch to a different provider: the provider chosen for a batch is used strictly.
 
 ### 3. Graceful Draining (`SIGTERM` / `SIGINT`)
 Upon receiving termination signals from Docker/Kubernetes:

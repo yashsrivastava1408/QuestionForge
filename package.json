@@ -14,6 +14,7 @@
     "dev:worker": "npm run dev:worker --workspace=apps/api",
     "build": "turbo run build",
     "test": "turbo run test",
+    "test:e2e": "npm run test:e2e --workspace=apps/api",
     "lint": "eslint apps/api/src apps/frontend/src",
     "typecheck": "turbo run typecheck",
     "db:generate": "npm run db:generate --workspace=packages/shared",

@@ -2,6 +2,9 @@ import puppeteer from 'puppeteer';
 import { AppError } from '../middleware/errorHandler.js';
 import { uploadExportToS3, isS3Enabled } from './s3Service.js';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 interface PaperWithQuestions {
   title: string;
@@ -58,7 +61,8 @@ export async function exportToPdf(
   const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    // The template is fully self-contained (no remote fonts/images), so there is no network to wait for.
+    await page.setContent(html, { waitUntil: 'domcontentloaded' });
     const pdfBuffer = await page.pdf({
       format: 'A4',
       printBackground: true,
@@ -70,35 +74,61 @@ export async function exportToPdf(
   }
 }
 
+export function localExportDir(): string {
+  return path.resolve(process.env.EXPORT_LOCAL_DIR ?? '.exports');
+}
+
 /**
- * Uploads a buffer to S3 and returns the presigned URL.
- * Throws AppError if S3 is not configured — prevents silent fallback to
- * ephemeral in-process memory, which breaks across multiple API replicas.
+ * Local-disk export storage is for single-machine use (development, demos, a
+ * one-box deployment). Files on one replica's disk are invisible to the others,
+ * so in production it must be chosen explicitly with EXPORT_STORAGE=local.
  */
-export async function uploadAndGetExportUrl(
+export function isLocalExportEnabled(): boolean {
+  return process.env.EXPORT_STORAGE === 'local' || (process.env.NODE_ENV !== 'production' && process.env.EXPORT_STORAGE !== 's3');
+}
+
+export interface StoredExport {
+  downloadUrl: string;
+  /** Set for local storage only: persisted on the ExportRecord so the download route can find the file. */
+  signedToken?: string;
+  storageKey?: string;
+}
+
+/**
+ * Stores an export and returns a short-lived download URL:
+ *  - S3 configured → upload, return a presigned URL.
+ *  - otherwise, where local storage is allowed → write to EXPORT_LOCAL_DIR and
+ *    return /api/export/download/<random token>, valid until `expiresAt`.
+ */
+export async function storeExport(
   buffer: Buffer,
   contentType: string,
   organizationId: string,
   paperId: string,
   ext: string,
   expiresInSeconds: number
-): Promise<string> {
-  if (!isS3Enabled()) {
+): Promise<StoredExport> {
+  if (isS3Enabled()) {
+    const s3Key = `exports/${organizationId}/${paperId}_${uuidv4()}.${ext}`;
+    const s3Url = await uploadExportToS3(s3Key, buffer, contentType, expiresInSeconds);
+    if (!s3Url) {
+      throw new AppError('Failed to upload export to S3. Please check your AWS credentials and bucket permissions.', 503);
+    }
+    return { downloadUrl: s3Url };
+  }
+
+  if (!isLocalExportEnabled()) {
     throw new AppError(
-      'Export storage (AWS S3) is not configured. Please set S3_BUCKET_NAME, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY in your environment.',
+      'Export storage is not configured. Set S3_BUCKET_NAME, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or set EXPORT_STORAGE=local for a single-machine deployment.',
       503
     );
   }
 
-  const signedToken = uuidv4();
-  const s3Key = `exports/${organizationId}/${paperId}_${signedToken}.${ext}`;
-  const s3Url = await uploadExportToS3(s3Key, buffer, contentType, expiresInSeconds);
-
-  if (!s3Url) {
-    throw new AppError('Failed to upload export to S3. Please check your AWS credentials and bucket permissions.', 503);
-  }
-
-  return s3Url;
+  const signedToken = crypto.randomBytes(32).toString('hex');
+  const storageKey = `${paperId}_${signedToken.slice(0, 16)}.${ext}`;
+  await mkdir(localExportDir(), { recursive: true });
+  await writeFile(path.join(localExportDir(), storageKey), buffer);
+  return { downloadUrl: `/api/export/download/${signedToken}`, signedToken, storageKey };
 }
 
 function buildPdfHtml(paper: PaperWithQuestions, includeAnswers: boolean, watermark: string, paperId: string): string {
@@ -108,9 +138,15 @@ function buildPdfHtml(paper: PaperWithQuestions, includeAnswers: boolean, waterm
     const optionsHtml = q.options
       ? q.options.map((o: any) => `<div class="option"><strong>${escapeHtml(o.id)})</strong> ${escapeHtml(o.text)}</div>`).join('')
       : '';
-    const answerHtml = includeAnswers && q.answer
-      ? `<div class="answer-block"><strong>✓ Answer:</strong> ${escapeHtml(q.answer)}<br/><em>${escapeHtml(q.explanation ?? '')}</em></div>`
-      : '';
+    // Coding questions have no single "answer": the internal copy shows the reference solution instead.
+    const solutions = (q.type === 'DSA' && q.optimalSolution && typeof q.optimalSolution === 'object' ? q.optimalSolution : {}) as Record<string, string>;
+    const [solutionLang] = Object.keys(solutions);
+    const answerHtml = !includeAnswers ? ''
+      : q.answer
+        ? `<div class="answer-block"><strong>✓ Answer:</strong> <span class="pre">${escapeHtml(q.answer)}</span><br/><em>${escapeHtml(q.explanation ?? '')}</em></div>`
+        : solutionLang
+          ? `<div class="answer-block"><strong>✓ Reference solution (${escapeHtml(solutionLang)}):</strong><pre>${escapeHtml(solutions[solutionLang])}</pre><em>${escapeHtml(q.explanation ?? '')}</em></div>`
+          : '';
     return `
       <div class="question-block">
         <div class="q-header">
@@ -129,9 +165,8 @@ function buildPdfHtml(paper: PaperWithQuestions, includeAnswers: boolean, waterm
 <head>
 <meta charset="UTF-8"/>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Inter', sans-serif; color: #1a1a2e; background: #fff; position: relative; }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #1a1a2e; background: #fff; position: relative; }
   .watermark {
     position: fixed; top: 50%; left: 50%;
     transform: translate(-50%, -50%) rotate(-30deg);
@@ -155,6 +190,9 @@ function buildPdfHtml(paper: PaperWithQuestions, includeAnswers: boolean, waterm
   .q-statement { font-size: 14px; line-height: 1.7; white-space: pre-wrap; margin-bottom: 14px; }
   .option { font-size: 14px; padding: 6px 10px; margin: 4px 0; background: #f9fafb; border-radius: 6px; }
   .answer-block { margin-top: 14px; padding: 12px; background: #f0fdf4; border-left: 4px solid #22c55e; border-radius: 6px; font-size: 13px; }
+  .answer-block pre, .answer-block .pre { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 11.5px; white-space: pre-wrap; word-break: break-word; }
+  .answer-block pre { margin: 8px 0; padding: 10px; background: #fff; border: 1px solid #d1fae5; border-radius: 6px; }
+  .answer-block em { white-space: pre-wrap; }
   .footer { text-align: center; font-size: 11px; color: #9ca3af; padding: 16px; border-top: 1px solid #e5e7eb; }
 </style>
 </head>

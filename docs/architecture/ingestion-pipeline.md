@@ -6,7 +6,7 @@ This document specifies `packages/ingestion` and the `/api/ingestion/*` endpoint
 
 ## 1. Why This Is Separate From Generation
 
-The LangGraph generate/validate pipeline produces a full question: statement, optimal and brute-force solutions, test cases, the works. Ingestion produces something more modest but genuinely useful: a **real problem statement and metadata**, scraped from a public source, with no solutions or test cases attached. It exists for the workflow where a reviewer wants to seed the bank from a known-good, already-vetted problem instead of trusting an LLM to invent one from scratch — the ingested row lands as a `DRAFT` question for a human (or a follow-up generation pass) to complete.
+The LangGraph generate/validate pipeline produces a full question: statement, optimal and brute-force solutions, test cases, the works. Ingestion produces something more modest but genuinely useful: a **real problem statement and metadata**, scraped from a public source, with no solutions or test cases attached. It exists for the workflow where a reviewer wants to seed the bank from a known-good, already-vetted problem instead of trusting an LLM to invent one from scratch — the ingested row lands as a `DRAFT` question. `POST /api/questions/:id/complete` then has the LLM write solutions and tests for that statement and validates them in the sandbox (see §Completing a draft below).
 
 ```mermaid
 flowchart LR
@@ -123,6 +123,42 @@ The Admin console's **Import Questions** tab (`apps/frontend/src/pages/AdminPage
 
 ## 5. What This Does Not Do
 
-- It does not generate solutions, test cases, or MCQ options — an ingested question is a `DRAFT` with a statement and metadata only.
+- Ingestion itself does not generate solutions or test cases — an ingested question is a `DRAFT` with a statement and metadata only until it is completed.
 - It does not deduplicate against the existing question bank the way the generation pipeline does (see [`vector-deduplication.md`](../database/vector-deduplication.md)) — nothing currently stops the same LeetCode problem from being ingested twice. Wiring `checkDuplicate` into `persistAsDraft` is a small, scoped addition if that becomes a real problem.
 - It respects LeetCode's rate limits by design (2s delay between requests) but is still hitting an unofficial API — treat it as best-effort, not an SLA-backed integration.
+
+---
+
+## Completing a draft
+
+An imported draft has no solutions, so it cannot be validated or reviewed as it is. In the Question Bank, open the draft and choose **Generate & validate solutions**, or call:
+
+```
+POST /api/questions/:id/complete        (ADMIN or GENERATOR)
+{ "llmProvider": "anthropic", "languages": ["python", "java"] }   // both optional
+→ 202 { "jobId": "…", "statusUrl": "/api/generate/status/…" }
+```
+
+This queues a one-item `COMPLETE_IMPORT` job that runs the normal generate → validate loop with one difference: the prompt contains the imported statement and tells the model **not to change what it asks**, only to pin down an exact stdin/stdout format and write the optimal solution, brute force, input generator and test cases.
+
+```mermaid
+flowchart LR
+    D(["DRAFT
+statement only"]) --> C["POST /complete"]
+    C --> L["LLM writes solutions,
+generator and tests"]
+    L --> V{"Differential validation
+in the sandbox"}
+    V -- pass --> OK(["VALIDATED
+title and source kept"])
+    V -- "fail x3" --> D2(["still DRAFT, unchanged
+reason stored in validationResult"])
+```
+
+- The draft row is only overwritten once the result has passed validation. A failed completion leaves it exactly as imported.
+- Only coding (`DSA`) drafts can be completed this way.
+- If no LLM key is available the request is refused with `400` straight away.
+
+## Rights to imported content
+
+Problem statements on LeetCode and GeeksforGeeks belong to those platforms. Fetching one does not give you the right to reuse it in your own assessments. Every ingestion response carries a `notice` saying so, and the UI shows a warning on imported questions. Treat imports as internal reference material unless you have confirmed you may use them; the tool cannot check that for you. Scraping may also be against a site's terms of service.

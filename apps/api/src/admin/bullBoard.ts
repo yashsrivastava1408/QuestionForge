@@ -5,76 +5,64 @@ import { generationQueue } from '../queues/generationQueue.js';
 import { webhookQueue } from '../queues/webhookQueue.js';
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { isTokenBlacklisted } from '../utils/redis.js';
+import { redisClient } from '../utils/redis.js';
 import { logger } from '../utils/logger.js';
 
-interface DecodedToken {
-  id: string;
-  email: string;
-  role: string;
-  organizationId: string;
-  jti: string;
+const SESSION_COOKIE = 'qf_bb_session';
+const TICKET_PREFIX = 'bullboard:ticket:';
+
+function readCookie(req: Request, name: string): string | undefined {
+  const match = req.headers.cookie?.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return match ? decodeURIComponent(match[1]) : undefined;
 }
 
 /**
- * Enterprise Authentication Guard for Bull Board UI.
- * Supports:
- *  1. Authorization: Bearer <token> header
- *  2. ?token=<token> query parameter (for direct browser navigation)
- *  3. qf_admin_token cookie (preserves session across static JS/CSS asset fetches)
+ * Authentication guard for the Bull Board UI.
+ *
+ * The dashboard is opened by browser navigation, which cannot send an
+ * Authorization header. Instead of accepting the user's JWT in the URL:
+ *  1. The admin console calls POST /api/admin/queues/ticket (normal Bearer auth)
+ *     and receives a random ticket that lives 60 seconds in Redis.
+ *  2. The browser opens /admin/queues?ticket=…. The ticket is consumed
+ *     atomically (GETDEL — it works exactly once), exchanged for an httpOnly
+ *     session cookie, and the browser is redirected to the clean URL.
+ *  3. The cookie holds a 1-hour JWT with scope "bullboard", which the API's
+ *     normal `authenticate` middleware refuses — it opens this dashboard only.
  */
 export async function bullBoardAuthMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    let token: string | undefined;
+    const secret = process.env.JWT_SECRET!;
 
-    // 1. Check Bearer header
-    const authHeader = req.headers.authorization;
-    if (authHeader?.startsWith('Bearer ')) {
-      token = authHeader.slice(7).trim();
+    if (typeof req.query.ticket === 'string' && /^[0-9a-f]{64}$/.test(req.query.ticket)) {
+      const stored = await redisClient.getdel(`${TICKET_PREFIX}${req.query.ticket}`);
+      if (!stored) return renderAuthError(req, res, 'This link has expired or was already used. Open the dashboard from the Admin Console again.');
+
+      const { userId, organizationId } = JSON.parse(stored);
+      const session = jwt.sign({ userId, organizationId, role: 'ADMIN', scope: 'bullboard' }, secret, { expiresIn: '1h' });
+      res.cookie(SESSION_COOKIE, session, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/admin/queues',
+        maxAge: 3600 * 1000,
+      });
+      return res.redirect('/admin/queues');
     }
 
-    // 2. Check query parameter (?token=...)
-    if (!token && typeof req.query.token === 'string') {
-      token = req.query.token;
+    const session = readCookie(req, SESSION_COOKIE);
+    if (!session) {
+      return renderAuthError(req, res, 'Authentication required to access the queue dashboard.');
     }
 
-    // 3. Check cookie
-    if (!token && req.headers.cookie) {
-      const match = req.headers.cookie.match(/(?:^|;\s*)qf_admin_token=([^;]+)/);
-      if (match) {
-        token = decodeURIComponent(match[1]);
-      }
-    }
-
-    if (!token) {
-      return renderAuthError(req, res, 'Authentication required to access Bull Board dashboard.');
-    }
-
-    const secret = process.env.JWT_SECRET || 'secret';
-    const decoded = jwt.verify(token, secret) as DecodedToken;
-
-    // Check Redis revocation blacklist
-    if (decoded.jti && (await isTokenBlacklisted(decoded.jti))) {
-      return renderAuthError(req, res, 'Session has been revoked.');
-    }
-
-    // Verify ADMIN role
-    if (decoded.role !== 'ADMIN') {
+    const decoded = jwt.verify(session, secret) as { role?: string; scope?: string };
+    if (decoded.scope !== 'bullboard' || decoded.role !== 'ADMIN') {
       return renderAuthError(req, res, 'Forbidden: Administrator privileges required.');
     }
-
-    // Set cookie so browser requests for Bull Board static JS/CSS scripts stay authenticated
-    res.cookie('qf_admin_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 3600 * 1000, // 1 hour
-    });
 
     next();
   } catch (err: any) {
     logger.warn('[BullBoard] Auth failed', { error: err.message });
-    return renderAuthError(req, res, 'Invalid or expired token.');
+    return renderAuthError(req, res, 'Invalid or expired session.');
   }
 }
 
@@ -100,8 +88,8 @@ function renderAuthError(req: Request, res: Response, message: string): void {
             <p>${message}</p>
             <div class="hint">
               <strong>How to connect:</strong><br/>
-              Navigate from the Question Forge Admin Console or append your admin token:<br/>
-              <code>/admin/queues?token=&lt;your-admin-jwt&gt;</code>
+              Open this dashboard from <code>Admin Console → Queues → Open Bull Board</code>.
+              It signs you in with a one-time link.
             </div>
           </div>
         </body>

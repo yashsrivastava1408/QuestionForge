@@ -14,6 +14,8 @@ export interface TestCase {
   expectedOutput: string;
   label?: string;
   isEdgeCase?: boolean;
+  /** True when this case is shown as an example inside the statement. */
+  isSample?: boolean;
 }
 
 export interface QuestionOption {

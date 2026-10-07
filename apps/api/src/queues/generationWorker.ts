@@ -1,16 +1,17 @@
 import { Worker, type Job } from 'bullmq';
 import { redisConnection } from '../utils/redis.js';
 import { logger } from '../utils/logger.js';
-import { _runPipelineAsync } from '../services/generationService.js';
+import { processGenerationItem, failGenerationItem } from '../services/generationService.js';
 import type { GenerationJobData } from './generationQueue.js';
 
 /**
- * BullMQ Worker: processes generation jobs from the 'generation' queue.
+ * BullMQ Worker: processes one question per job from the 'generation' queue.
  *
- * Key properties:
- *  - concurrency: 5 — runs up to 5 jobs in parallel (tunable via env var)
- *  - Automatically retries on failure (up to 3 attempts, exponential backoff)
- *  - Jobs survive server crashes — they are re-queued on worker restart
+ *  - concurrency: how many questions are worked on in parallel (WORKER_CONCURRENCY, default 5)
+ *  - a job that throws (infrastructure failure) is retried with backoff; when the
+ *    last attempt fails, the item is marked FAILED with the reason so the UI
+ *    never shows it as stuck
+ *  - jobs live in Redis, so they survive a worker crash or restart
  */
 export function startGenerationWorker() {
   const concurrency = Number(process.env.WORKER_CONCURRENCY ?? 5);
@@ -18,24 +19,24 @@ export function startGenerationWorker() {
   const worker = new Worker<GenerationJobData>(
     'generation',
     async (job: Job<GenerationJobData>) => {
-      logger.info(`[Worker] Processing job ${job.id} (attempt ${job.attemptsMade + 1})`);
-      await _runPipelineAsync(job.data.jobId, job.data.config, job);
+      logger.info(`[Worker] Processing item ${job.data.itemId} (attempt ${job.attemptsMade + 1})`);
+      await processGenerationItem(job.data.itemId);
     },
     {
       connection: redisConnection,
       concurrency,
+      // A multi-language validation can legitimately take minutes.
+      lockDuration: 120_000,
     }
   );
 
-  worker.on('completed', (job) => {
-    logger.info(`[Worker] Job ${job.id} completed successfully`);
-  });
-
   worker.on('failed', (job, err) => {
-    logger.error(`[Worker] Job ${job?.id} failed`, {
-      error: err.message,
-      attempts: job?.attemptsMade,
-    });
+    logger.error(`[Worker] Item ${job?.data.itemId} failed`, { error: err.message, attempts: job?.attemptsMade });
+    if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
+      failGenerationItem(job.data.itemId, `Gave up after ${job.attemptsMade} attempts: ${err.message}`).catch((e) =>
+        logger.error('[Worker] Could not record item failure', { error: e.message })
+      );
+    }
   });
 
   worker.on('error', (err) => {

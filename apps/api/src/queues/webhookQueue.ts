@@ -3,6 +3,8 @@ import { redisConnection } from '../utils/redis.js';
 import { logger } from '../utils/logger.js';
 import { prisma } from '../utils/prisma.js';
 import crypto from 'crypto';
+import { assertPublicHttpUrl } from '../utils/urlSafety.js';
+import { decryptSecret } from '../utils/crypto.js';
 
 export interface WebhookJobData {
   organizationId: string;
@@ -48,9 +50,12 @@ export function startWebhookWorker() {
       });
       if (!org?.webhookUrl) return; // Webhook removed after job was enqueued — skip
 
+      // Re-checked on every delivery: the host's DNS may have changed since the URL was saved.
+      await assertPublicHttpUrl(org.webhookUrl);
+
       const body = JSON.stringify(payload);
       const sig = crypto
-        .createHmac('sha256', org.webhookSecret!)
+        .createHmac('sha256', decryptSecret(org.webhookSecret ?? ''))
         .update(body)
         .digest('hex');
 
@@ -62,6 +67,8 @@ export function startWebhookWorker() {
           'X-QuestionForge-Attempt': String(job.attemptsMade + 1),
         },
         body,
+        // Redirects are not followed: a public URL must not be able to bounce us to an internal one.
+        redirect: 'manual',
         signal: AbortSignal.timeout(10_000), // 10s hard timeout per attempt
       });
 

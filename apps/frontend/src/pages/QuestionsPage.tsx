@@ -1,14 +1,16 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { Search, ChevronLeft, ChevronRight, FileQuestion } from 'lucide-react';
+import QuestionDetail from '../components/QuestionDetail';
 
 const STATUS_OPTIONS = ['', 'DRAFT', 'VALIDATING', 'VALIDATED', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'FAILED'];
-const TYPE_OPTIONS = ['', 'DSA', 'OOPS', 'SQL', 'SYSTEM_DESIGN', 'CONCEPTUAL'];
+const TYPE_OPTIONS = ['', 'DSA', 'OOPS', 'SQL', 'SYSTEM_DESIGN', 'CONCEPTUAL', 'MCQ'];
 const DIFF_OPTIONS = ['', 'EASY', 'MEDIUM', 'HARD'];
 
 export default function QuestionsPage() {
   const [filters, setFilters] = useState({ status: '', type: '', difficulty: '', search: '', page: 1 });
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const queryParams = new URLSearchParams();
   if (filters.status) queryParams.set('status', filters.status);
@@ -39,14 +41,14 @@ export default function QuestionsPage() {
           </div>
           <h1 style={{ margin: 0 }}>Question Bank</h1>
           <p style={{ margin: 0, marginTop: 4 }}>
-            {total.toLocaleString()} validated technical questions stored across your organization.
+            {total.toLocaleString()} questions in your organization, in every status. Click a row to inspect, edit or re-validate it.
           </p>
         </div>
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <span className="badge-live">
             <span className="pulse-indicator" style={{ background: '#10b981', color: '#10b981' }} />
-            VERIFIED REPOSITORY
+            QUESTION BANK
           </span>
         </div>
       </div>
@@ -130,7 +132,12 @@ export default function QuestionsPage() {
                       </td>
                     </tr>
                   ) : questions.map((q: any) => (
-                    <tr key={q.id}>
+                    <Fragment key={q.id}>
+                    <tr
+                      onClick={() => setOpenId(openId === q.id ? null : q.id)}
+                      style={{ cursor: 'pointer' }}
+                      aria-expanded={openId === q.id}
+                    >
                       <td style={{ maxWidth: 320 }}>
                         <div style={{ fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {q.title}
@@ -164,6 +171,14 @@ export default function QuestionsPage() {
                         {new Date(q.createdAt).toLocaleDateString()}
                       </td>
                     </tr>
+                    {openId === q.id && (
+                      <tr>
+                        <td colSpan={7} style={{ padding: '0 20px 20px', background: 'rgba(18, 26, 44, 0.6)' }}>
+                          <QuestionDetail id={q.id} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

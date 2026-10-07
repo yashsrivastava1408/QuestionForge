@@ -66,58 +66,63 @@ function cosineSimilarityNormalized(a: number[], b: number[]): number {
   return Math.max(0, Math.min(1, dot));
 }
 
+/** How many of the organization's most recent questions a new draft is compared against. */
+const SCAN_WINDOW = Number(process.env.DEDUP_SCAN_WINDOW ?? 5000);
+
+export interface DuplicateMatch {
+  id: string;
+  title: string;
+  similarity: number;
+}
+
 /**
- * Compares statement against existing questions in the organization question bank.
+ * Compares a statement against the organization's question bank and returns the
+ * closest match at or above the duplicate threshold, or null.
+ *
+ * This is LEXICAL similarity (shared vocabulary), not semantic: it catches
+ * reworded copies of the same statement, not the same problem told as a
+ * different story. Questions that are still being validated are included so
+ * parallel jobs in one batch cannot produce twins; FAILED ones are not.
  */
-export async function checkDuplicate(statement: string, organizationId: string): Promise<boolean> {
+export async function findDuplicate(
+  statement: string,
+  organizationId: string,
+  excludeQuestionId?: string | null
+): Promise<DuplicateMatch | null> {
   try {
     const embedding = computeEmbedding(statement);
 
-    // Fetch existing question embeddings for this organization (latest 300 questions)
     const existing = await prisma.question.findMany({
       where: {
         organizationId,
+        status: { not: 'FAILED' },
         NOT: { embeddingVector: { isEmpty: true } },
+        ...(excludeQuestionId && { id: { not: excludeQuestionId } }),
       },
       select: { id: true, title: true, embeddingVector: true },
-      take: 300,
+      take: SCAN_WINDOW,
       orderBy: { createdAt: 'desc' },
     });
 
+    let best: DuplicateMatch | null = null;
     for (const q of existing) {
       const qVector = q.embeddingVector as number[];
       if (!Array.isArray(qVector) || qVector.length !== VECTOR_DIMENSION) continue;
 
-      const sim = cosineSimilarityNormalized(embedding, qVector);
-      if (sim >= DUPLICATE_THRESHOLD) {
-        logger.warn(
-          `[Deduplication] Duplicate detected (similarity: ${sim.toFixed(3)}) with existing question '${q.title}' (${q.id})`
-        );
-        return true;
+      const similarity = cosineSimilarityNormalized(embedding, qVector);
+      if (similarity >= DUPLICATE_THRESHOLD && (!best || similarity > best.similarity)) {
+        best = { id: q.id, title: q.title, similarity };
       }
     }
 
-    return false;
+    if (best) {
+      logger.warn(
+        `[Deduplication] Duplicate detected (similarity: ${best.similarity.toFixed(3)}) with existing question '${best.title}' (${best.id})`
+      );
+    }
+    return best;
   } catch (err: any) {
     logger.error('[Deduplication] Check failed, falling open', { error: err.message });
-    return false; // Fail open — don't block generation on dedup error
-  }
-}
-
-/**
- * Persists the computed embedding vector for a newly validated question.
- */
-export async function storeEmbedding(questionId: string, statement: string): Promise<void> {
-  try {
-    const embedding = computeEmbedding(statement);
-    await prisma.question.update({
-      where: { id: questionId },
-      data: { embeddingVector: embedding },
-    });
-    logger.info(`[Deduplication] Stored 256-dim embedding vector for question ${questionId}`);
-  } catch (err: any) {
-    logger.error(`[Deduplication] Failed to store embedding for question ${questionId}`, {
-      error: err.message,
-    });
+    return null; // Fail open — don't block generation on dedup error
   }
 }

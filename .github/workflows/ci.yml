@@ -114,6 +114,16 @@ jobs:
       - name: Run Vitest Suite
         run: npm run test
 
+      # Real Express app + BullMQ workers + Postgres + Redis + real code execution
+      # (python3, node, g++, javac and sqlite3 from the runner image). Only the LLM
+      # is scripted. The suite truncates the database it is pointed at, which is
+      # fine here: the service container exists only for this job.
+      - name: Run End-to-End Suite
+        env:
+          E2E_DATABASE_URL: "postgresql://qforge:qforge_password@localhost:5432/question_forge"
+          E2E_REDIS_URL: "redis://localhost:6379/15"
+        run: npm run test:e2e
+
   build:
     name: ⚡ Monorepo Production Build (Turborepo)
     runs-on: ubuntu-latest

@@ -1,5 +1,6 @@
 import { Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import ChangePassword from './ChangePassword';
 import {
   LayoutDashboard, Wand2, FileQuestion, ClipboardCheck,
   BookOpen, BarChart3, Settings, LogOut, ShieldCheck, Activity
@@ -142,6 +143,7 @@ export default function Layout() {
               </div>
             </div>
           </div>
+          <ChangePassword />
           <button
             className="nav-item"
             onClick={logout}

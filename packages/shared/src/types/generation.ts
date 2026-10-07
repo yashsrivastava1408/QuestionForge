@@ -18,17 +18,44 @@ export interface GenerationWizardConfig {
   companyStyle?: string;         // e.g. "google", "amazon", "service-based"
   llmProvider: LLMProvider;
   paperId?: string;
+  mcqOptionsCount?: number;
 }
 
+export type GenerationKind = 'GENERATE' | 'COMPLETE_IMPORT' | 'REVALIDATE';
+export type GenerationItemStatus = 'QUEUED' | 'GENERATING' | 'VALIDATING' | 'VALIDATED' | 'FAILED';
+
+export interface GenerationItemSnapshot {
+  index: number;
+  type: QuestionType;
+  difficulty: Difficulty;
+  topic: string | null;
+  status: GenerationItemStatus;
+  /** Human-readable current step, e.g. "Sandbox: differential testing". */
+  stage: string | null;
+  attempts: number;
+  failureReason: string | null;
+  questionId: string | null;
+  title: string | null;
+}
+
+/** Shape returned by GET /api/generate/status/:jobId and each SSE frame. */
 export interface GenerationJobStatus {
   jobId: string;
-  status: 'queued' | 'running' | 'completed' | 'failed';
-  totalRequested: number;
-  generated: number;
-  validated: number;
-  failed: number;
-  estimatedTokens?: number;
-  estimatedCostUsd?: number;
-  startedAt?: string;
-  completedAt?: string;
+  kind: GenerationKind;
+  state: 'waiting' | 'active' | 'completed' | 'failed';
+  /** 0–100: share of items that reached a final state. */
+  progress: number;
+  done: boolean;
+  total: number;
+  counts: { queued: number; running: number; validated: number; failed: number };
+  items: GenerationItemSnapshot[];
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    /** null when no price is known for the provider/model (see pricing.ts). */
+    costUsd: number | null;
+  };
+  createdAt: string;
+  finishedAt: string | null;
+  cancelledAt: string | null;
 }

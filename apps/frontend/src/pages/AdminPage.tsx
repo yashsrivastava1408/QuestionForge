@@ -13,7 +13,12 @@ import {
   AlertCircle,
   ExternalLink,
   Download,
+  KeyRound,
 } from 'lucide-react';
+import LlmKeysPanel from '../components/LlmKeysPanel';
+import AddUserForm from '../components/AddUserForm';
+import UserActions from '../components/UserActions';
+import { useAuth } from '../context/AuthContext';
 
 interface IngestedQuestionPreview {
   title: string;
@@ -27,10 +32,12 @@ interface IngestedQuestionPreview {
 
 export default function AdminPage() {
   const qc = useQueryClient();
+  const { user: currentUser } = useAuth();
+  const [userError, setUserError] = useState<string | null>(null);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'webhooks' | 'queues' | 'ingestion'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'webhooks' | 'queues' | 'ingestion' | 'llm'>('users');
 
   // Ingestion tab state
   const [ingestPlatform, setIngestPlatform] = useState<'leetcode' | 'gfg'>('leetcode');
@@ -75,7 +82,8 @@ export default function AdminPage() {
   const roleChangeMutation = useMutation({
     mutationFn: ({ id, role }: { id: string; role: string }) =>
       axios.patch(`/api/admin/users/${id}/role`, { role }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-users'] }),
+    onSuccess: () => { setUserError(null); qc.invalidateQueries({ queryKey: ['admin-users'] }); },
+    onError: (err: any) => setUserError(err?.response?.data?.error?.message ?? 'Could not change the role.'),
   });
 
   // Configure webhook mutation
@@ -125,12 +133,28 @@ export default function AdminPage() {
       setIngestError(err.response?.data?.error?.message ?? 'Failed to save question.'),
   });
 
+  /**
+   * Opens the Bull Board UI with a one-time ticket. The tab is opened first (inside
+   * the click, so popup blockers allow it) and pointed at the ticket URL once the
+   * API returns it — the login token itself never goes into a URL.
+   */
+  const openBullBoard = async () => {
+    const tab = window.open('', '_blank');
+    try {
+      const { data } = await axios.post('/api/admin/queues/ticket');
+      if (tab) tab.location.href = data.url;
+    } catch {
+      tab?.close();
+    }
+  };
+
   const tabs = [
     { id: 'users', label: 'Team Members', icon: Users },
     { id: 'audit', label: 'Audit Trail', icon: Activity },
     { id: 'webhooks', label: 'Webhooks', icon: Webhook },
     { id: 'queues', label: 'Queue Monitor', icon: Cpu },
     { id: 'ingestion', label: 'Import Questions', icon: Download },
+    { id: 'llm', label: 'LLM Keys', icon: KeyRound },
   ] as const;
 
   return (
@@ -177,6 +201,7 @@ export default function AdminPage() {
               <Users size={16} style={{ display: 'inline', marginRight: 8 }} />
               Team Members
             </div>
+            {userError && <div className="alert alert-error" style={{ marginTop: 12 }}>{userError}</div>}
             <div className="table-wrapper" style={{ marginTop: 16 }}>
               <table>
                 <thead>
@@ -186,12 +211,16 @@ export default function AdminPage() {
                     <th>Role</th>
                     <th>Joined</th>
                     <th>Change Role</th>
+                    <th>Account</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(usersData ?? []).map((u: any) => (
-                    <tr key={u.id}>
-                      <td style={{ fontWeight: 600 }}>{u.name}</td>
+                    <tr key={u.id} style={{ opacity: u.isActive === false ? 0.55 : 1 }}>
+                      <td style={{ fontWeight: 600 }}>
+                        {u.name}
+                        {u.isActive === false && <span className="badge badge-alert" style={{ marginLeft: 8, fontSize: 10 }}>Deactivated</span>}
+                      </td>
                       <td style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{u.email}</td>
                       <td>
                         <span className="badge badge-dsa">{u.role}</span>
@@ -215,13 +244,19 @@ export default function AdminPage() {
                           ))}
                         </select>
                       </td>
+                      <td>
+                        <UserActions user={u} isSelf={u.email === currentUser?.email} onError={setUserError} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            <AddUserForm />
           </div>
         )}
+
+        {activeTab === 'llm' && <LlmKeysPanel />}
 
         {/* Audit Logs Tab */}
         {activeTab === 'audit' && (
@@ -389,15 +424,13 @@ export default function AdminPage() {
                 BullMQ Distributed Queue Monitor
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <a
-                  href={`http://localhost:4000/admin/queues?token=${localStorage.getItem('token') || ''}`}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
                   className="btn btn-primary btn-sm"
-                  style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  onClick={openBullBoard}
                 >
                   <ExternalLink size={13} /> Live Bull Board UI
-                </a>
+                </button>
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => refetchQueues()}
@@ -524,8 +557,10 @@ export default function AdminPage() {
             </div>
             <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 20 }}>
               Pull a real problem statement by its URL slug and stage it as a <code>DRAFT</code> in
-              the question bank. Ingested questions have no optimal/brute-force solution yet — use
-              the Review page to complete or regenerate them before validating.
+              the question bank. Imported questions have no solutions or tests yet — open the draft in
+              the Question Bank and choose <strong>Generate &amp; validate solutions</strong>. The statement
+              remains the property of its source platform: make sure you have the right to reuse it
+              before putting it in an assessment.
             </p>
 
             <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>

@@ -146,7 +146,7 @@ public:
             color: 'var(--text-primary)'
           }}>
             <Sparkles size={14} color="#f43f5e" />
-            <span>Multi-Agent Adversarial Debate & Isolated Piston Sandboxes</span>
+            <span>Questions checked by running code, not by trusting the model</span>
             <span style={{
               background: 'rgba(244,63,94,0.2)',
               color: '#f43f5e',
@@ -155,7 +155,7 @@ public:
               fontSize: 11,
               fontWeight: 700
             }}>
-              v1.2 Active
+              Open source
             </span>
           </div>
         </div>
@@ -171,9 +171,9 @@ public:
             lineHeight: 1.12,
             marginBottom: 24
           }}>
-            The Enterprise-Grade <br />
-            <span className="text-gradient-rose">AI Validation Engine</span> <br />
-            for Technical Assessment.
+            Interview questions <br />
+            <span className="text-gradient-rose">verified by execution</span>, <br />
+            then by a human.
           </h1>
           
           <p style={{
@@ -184,7 +184,7 @@ public:
             lineHeight: 1.6,
             fontWeight: 400
           }}>
-            Generate, mathematically verify, and export DSA & Systems design interview targets with <span style={{ color: '#ffffff', fontWeight: 600 }}>zero hallucinations</span>. Pitting AI adversaries against each other in real-time.
+            An LLM drafts each question. Coding and SQL questions are then <span style={{ color: '#ffffff', fontWeight: 600 }}>run in a sandbox against a brute-force oracle</span>; the rest are blind-solved and reviewed by a second model. Only what passes reaches your review queue.
           </p>
 
           <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -242,7 +242,7 @@ public:
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span className="badge-live">
                   <span className="pulse-indicator" style={{ background: '#10b981', color: '#10b981' }} />
-                  PISTON VERIFIED
+                  SANDBOX VERIFIED
                 </span>
                 <span style={{
                   padding: '3px 10px',
@@ -254,7 +254,7 @@ public:
                   fontWeight: 700,
                   fontFamily: 'var(--font-mono)'
                 }}>
-                  Judge Score: 98.4 / 100
+                  Illustration
                 </span>
               </div>
             </div>
@@ -289,22 +289,22 @@ public:
                   gap: 10
                 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
-                    Multi-Agent Consensus Telemetry
+                    How this question was checked
                   </div>
                   
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#f8fafc' }}>
                     <CheckCircle2 size={15} color="#10b981" />
-                    <span><strong>Adversary:</strong> Tested negative indices, duplicates & overflow</span>
+                    <span><strong>Oracle:</strong> Matches the brute force on listed and random inputs</span>
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#f8fafc' }}>
                     <CheckCircle2 size={15} color="#10b981" />
-                    <span><strong>Judge:</strong> Zero hallucinations. Formal mathematical proof</span>
+                    <span><strong>Independent solver:</strong> Same answers from the statement alone</span>
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#f8fafc' }}>
                     <Cpu size={15} color="#06b6d4" />
-                    <span><strong>Sandbox:</strong> 12/12 test cases compiled in <strong>38ms</strong></span>
+                    <span><strong>Sandbox:</strong> 12 listed + 16 generated inputs passed</span>
                   </div>
                 </div>
               </div>
@@ -402,10 +402,10 @@ public:
               <ShieldCheck size={26} />
             </div>
             <h3 style={{ fontSize: 19, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12, fontFamily: 'var(--font-display)' }}>
-              Adversarial Debate Architecture
+              Checked, Not Trusted
             </h3>
             <p style={{ color: 'var(--text-secondary)', lineHeight: 1.65, fontSize: 14 }}>
-              Our unique LangGraph multi-agent pipeline pits an Adversary against the Generator. The Adversary constructs deceptive edge cases while a formal Judge scores clarity, time complexity, and constraints.
+              Every draft goes through a generate → validate → retry loop. When a check fails, the exact reason goes back to the model for another attempt. MCQs are answered by a second model that cannot see the answer key.
             </p>
           </div>
 
@@ -429,7 +429,7 @@ public:
               Isolated Sandbox Execution
             </h3>
             <p style={{ color: 'var(--text-secondary)', lineHeight: 1.65, fontSize: 14 }}>
-              Every DSA question automatically generates optimal reference and brute-force implementations. They are compiled and run on dedicated Piston EC2 sandboxes to guarantee mathematical correctness.
+              Every coding question comes with an optimal solution, a brute-force solution and an input generator. All of them run in an isolated sandbox, and the outputs must agree on hand-written and random inputs.
             </p>
           </div>
 
@@ -453,7 +453,7 @@ public:
               12-Factor Enterprise Platform
             </h3>
             <p style={{ color: 'var(--text-secondary)', lineHeight: 1.65, fontSize: 14 }}>
-              Zero vendor lock-in. Bring Your Own Keys (BYOK) for Anthropic, OpenAI, or Gemini. Outbound HMAC-SHA256 Webhooks, BullMQ Redis 7 queues, and 1-click GitHub Actions CI/CD deployment.
+              Use your own Anthropic, OpenAI or Gemini keys, stored encrypted. Signed webhooks, a review queue with version history, a paper builder, and PDF or JSON export.
             </p>
           </div>
 

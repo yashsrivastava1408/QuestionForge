@@ -1,11 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import {
-  Wand2, AlertCircle, CheckCircle2, XCircle, Loader2,
-  Cpu, ShieldAlert, Sparkles, Brain, Check
-} from 'lucide-react';
+import { Wand2, AlertCircle, CheckCircle2, XCircle, Loader2, Check } from 'lucide-react';
+import JobProgress, { useJobStatus } from '../components/JobProgress';
+import JobHistory from '../components/JobHistory';
 
 const TOPICS = [
   'Arrays', 'Linked Lists', 'Stacks & Queues', 'Trees', 'Graphs',
@@ -19,17 +18,22 @@ const STYLES = ['Google-style', 'Amazon-style', 'Service-based', 'Startup', 'Dat
 const ROLE_LEVELS = ['intern', 'sde1', 'sde2', 'senior', 'lead'];
 const LLM_PROVIDERS = ['gemini', 'anthropic', 'openai'];
 
-const TOKENS_PER_Q = 2500;
-const COST_PER_1M = 3.0;
+/** Shown in the provider picker. The exact model is chosen server-side (see Admin → LLM Keys). */
+const PROVIDER_LABELS: Record<string, string> = {
+  gemini: 'Google Gemini',
+  anthropic: 'Anthropic Claude',
+  openai: 'OpenAI',
+};
 
-type JobState = 'waiting' | 'active' | 'completed' | 'failed' | 'delayed' | null;
-
-interface JobProgress {
-  state: JobState;
-  percent: number;
-  done: boolean;
-  failedReason?: string;
-}
+/** How each question type is checked — shown so nobody assumes more than is true. */
+const VALIDATION_NOTES: Record<string, string> = {
+  DSA: 'runs every solution in the sandbox against a brute-force oracle',
+  SQL: 'runs two independent queries in SQLite on several datasets',
+  MCQ: 'blind-solved by a second model, then adversarially reviewed',
+  OOPS: 'blind-solved by a second model, then adversarially reviewed',
+  CONCEPTUAL: 'blind-solved by a second model, then adversarially reviewed',
+  SYSTEM_DESIGN: 'rubric reviewed by a second model (not executable)',
+};
 
 export default function GeneratePage() {
   const navigate = useNavigate();
@@ -45,50 +49,25 @@ export default function GeneratePage() {
     mcqOptionsCount: 4,
   });
   const [jobId, setJobId] = useState<string | null>(null);
-  const [jobProgress, setJobProgress] = useState<JobProgress>({ state: null, percent: 0, done: false });
-  const sseRef = useRef<EventSource | null>(null);
+  // Bumped whenever the same job is re-run (retry), so the live subscription restarts.
+  const [run, setRun] = useState(0);
+  const job = useJobStatus(jobId ? `${jobId}` : null, undefined, run);
+  const jobRunning = !!jobId && !job?.done;
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const estimatedTokens = config.totalQuestions * TOKENS_PER_Q;
-  const estimatedCost = ((estimatedTokens / 1_000_000) * COST_PER_1M).toFixed(4);
+  const jobAction = useMutation({
+    mutationFn: (action: 'cancel' | 'retry-failed') => axios.post(`/api/generate/jobs/${jobId}/${action}`).then(r => r.data),
+    onSuccess: (_data, action) => {
+      setActionError(null);
+      if (action === 'retry-failed') setRun(r => r + 1);
+    },
+    onError: (err: any) => setActionError(err?.response?.data?.error?.message ?? 'That did not work.'),
+  });
 
   const mutation = useMutation({
     mutationFn: () => axios.post('/api/generate', config).then(r => r.data),
-    onSuccess: (data) => {
-      setJobId(data.jobId);
-      setJobProgress({ state: 'waiting', percent: 0, done: false });
-    },
+    onSuccess: (data) => setJobId(data.jobId),
   });
-
-  // Subscribe to SSE stream whenever a new jobId is set
-  useEffect(() => {
-    if (!jobId) return;
-
-    if (sseRef.current) sseRef.current.close();
-
-    const token = localStorage.getItem('qf_token') ?? 'mock-token';
-    const url = `/api/generate/status/${jobId}/stream?token=${token}`;
-    const es = new EventSource(url);
-    sseRef.current = es;
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data) as { state: JobState; progress: number; done?: boolean; failedReason?: string };
-        setJobProgress({
-          state: data.state,
-          percent: typeof data.progress === 'number' ? data.progress : 0,
-          done: !!data.done,
-          failedReason: data.failedReason,
-        });
-        if (data.done) es.close();
-      } catch { /* ignore parse errors */ }
-    };
-
-    es.onerror = () => {
-      if (jobProgress.done) es.close();
-    };
-
-    return () => es.close();
-  }, [jobId]);
 
   const toggleItem = (field: 'topics' | 'questionTypes' | 'languages', value: string) => {
     setConfig(c => {
@@ -102,7 +81,6 @@ export default function GeneratePage() {
 
   const startNew = () => {
     setJobId(null);
-    setJobProgress({ state: null, percent: 0, done: false });
     mutation.reset();
   };
 
@@ -121,169 +99,82 @@ export default function GeneratePage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className="badge-live">
             <span className="pulse-indicator" style={{ background: '#10b981', color: '#10b981' }} />
-            BULLMQ PERSISTENT
+            ONE JOB PER QUESTION
           </span>
         </div>
       </div>
 
       <div className="page-body">
 
-        {/* ---- Job Progress Card / Stream Banner ---- */}
+        {/* ---- Live job progress: one row per question ---- */}
         {jobId && (
-          <div className="animate-fade-in" style={{ marginBottom: 32 }}>
-            {!jobProgress.done && jobProgress.state !== 'failed' && (
-              <div className="card" style={{
-                background: 'linear-gradient(180deg, rgba(244,63,94,0.1) 0%, rgba(13,19,34,0.85) 100%)',
-                borderColor: 'rgba(244,63,94,0.4)',
-                boxShadow: '0 12px 40px rgba(0,0,0,0.5), 0 0 24px rgba(244,63,94,0.2)'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{
-                      width: 36, height: 36, borderRadius: 10,
-                      background: 'rgba(244,63,94,0.2)',
-                      border: '1px solid rgba(244,63,94,0.4)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: 'var(--color-primary)'
-                    }}>
-                      <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
-                    </div>
-                    <div>
-                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, fontFamily: 'var(--font-display)' }}>
-                        {jobProgress.state === 'waiting' ? 'Job Queued in BullMQ Cluster' :
-                         jobProgress.state === 'active' ? `Multi-Agent Generation & Sandbox Active` :
-                         jobProgress.state === 'delayed' ? 'Job Delayed — Will Retry Automatically' :
-                         'Processing Technical Targets...'}
-                      </h3>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>
-                        Job Reference: {jobId}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ textAlign: 'right' }}>
-                    <span style={{ fontSize: 26, fontWeight: 800, fontFamily: 'var(--font-display)', color: 'var(--color-primary)' }}>
-                      {jobProgress.percent}%
-                    </span>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>LIVE SSE STREAM</div>
-                  </div>
-                </div>
-
-                {/* Progress Bar */}
-                <div style={{ height: 10, borderRadius: 6, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginBottom: 20 }}>
-                  <div style={{
-                    height: '100%',
-                    width: `${Math.max(jobProgress.percent, 5)}%`,
-                    background: 'var(--gradient-rose)',
-                    borderRadius: 6,
-                    boxShadow: '0 0 16px rgba(244,63,94,0.6)',
-                    transition: 'width 0.5s cubic-bezier(0.16, 1, 0.3, 1)'
-                  }} />
-                </div>
-
-                {/* 4 Pipeline Stage Badges */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-                  <div style={{
-                    padding: '10px 12px',
-                    borderRadius: 8,
-                    background: jobProgress.percent >= 20 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.03)',
-                    border: `1px solid ${jobProgress.percent >= 20 ? 'rgba(16,185,129,0.3)' : 'var(--border-light)'}`,
-                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 12
-                  }}>
-                    <Brain size={14} color={jobProgress.percent >= 20 ? '#10b981' : 'var(--text-muted)'} />
-                    <span style={{ color: jobProgress.percent >= 20 ? '#ffffff' : 'var(--text-muted)' }}>1. LLM Drafting</span>
-                  </div>
-
-                  <div style={{
-                    padding: '10px 12px',
-                    borderRadius: 8,
-                    background: jobProgress.percent >= 50 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.03)',
-                    border: `1px solid ${jobProgress.percent >= 50 ? 'rgba(16,185,129,0.3)' : 'var(--border-light)'}`,
-                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 12
-                  }}>
-                    <ShieldAlert size={14} color={jobProgress.percent >= 50 ? '#10b981' : 'var(--text-muted)'} />
-                    <span style={{ color: jobProgress.percent >= 50 ? '#ffffff' : 'var(--text-muted)' }}>2. Adversary Debate</span>
-                  </div>
-
-                  <div style={{
-                    padding: '10px 12px',
-                    borderRadius: 8,
-                    background: jobProgress.percent >= 80 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.03)',
-                    border: `1px solid ${jobProgress.percent >= 80 ? 'rgba(16,185,129,0.3)' : 'var(--border-light)'}`,
-                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 12
-                  }}>
-                    <Sparkles size={14} color={jobProgress.percent >= 80 ? '#10b981' : 'var(--text-muted)'} />
-                    <span style={{ color: jobProgress.percent >= 80 ? '#ffffff' : 'var(--text-muted)' }}>3. Judge Scoring</span>
-                  </div>
-
-                  <div style={{
-                    padding: '10px 12px',
-                    borderRadius: 8,
-                    background: jobProgress.percent >= 100 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.03)',
-                    border: `1px solid ${jobProgress.percent >= 100 ? 'rgba(16,185,129,0.3)' : 'var(--border-light)'}`,
-                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 12
-                  }}>
-                    <Cpu size={14} color={jobProgress.percent >= 100 ? '#10b981' : 'var(--text-muted)'} />
-                    <span style={{ color: jobProgress.percent >= 100 ? '#ffffff' : 'var(--text-muted)' }}>4. Piston Sandbox</span>
-                  </div>
-                </div>
-
-              </div>
-            )}
-
-            {/* Completed Banner */}
-            {jobProgress.done && jobProgress.state === 'completed' && (
-              <div className="card" style={{
-                background: 'linear-gradient(180deg, rgba(16,185,129,0.12) 0%, rgba(13,19,34,0.85) 100%)',
-                borderColor: 'rgba(16,185,129,0.4)',
-                boxShadow: '0 12px 40px rgba(0,0,0,0.5), 0 0 24px rgba(16,185,129,0.2)'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <div style={{
-                      width: 44, height: 44, borderRadius: 12,
-                      background: 'rgba(16,185,129,0.2)',
-                      border: '1px solid rgba(16,185,129,0.4)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: '#10b981'
-                    }}>
-                      <CheckCircle2 size={24} />
-                    </div>
-                    <div>
-                      <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, fontFamily: 'var(--font-display)', color: '#ffffff' }}>
-                        Generation & Mathematical Validation Complete!
-                      </h3>
-                      <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-                        All questions were verified by Piston sandboxes and are ready for inspection in your Review Queue.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: 12 }}>
-                    <button className="btn btn-secondary" onClick={startNew}>
-                      Configure Another Batch
-                    </button>
-                    <button className="btn btn-primary" onClick={() => navigate('/dashboard/review')}>
-                      Open Review Queue →
-                    </button>
+          <div className="card animate-fade-in" style={{
+            marginBottom: 32,
+            borderColor: job?.done
+              ? (job.counts.validated > 0 ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)')
+              : 'rgba(244,63,94,0.4)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {!job?.done && <Loader2 size={20} color="var(--color-primary)" style={{ animation: 'spin 1s linear infinite' }} />}
+                {job?.done && job.counts.validated > 0 && <CheckCircle2 size={22} color="var(--color-success)" />}
+                {job?.done && job.counts.validated === 0 && <XCircle size={22} color="var(--color-error)" />}
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, fontFamily: 'var(--font-display)' }}>
+                    {!job ? 'Starting…'
+                      : !job.done ? (job.state === 'waiting' ? 'Queued' : 'Generating and validating')
+                      : job.counts.failed === 0 ? `All ${job.total} questions validated`
+                      : job.counts.validated === 0 ? 'No question passed validation'
+                      : `${job.counts.validated} of ${job.total} questions validated`}
+                  </h3>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+                    Job {jobId}
                   </div>
                 </div>
               </div>
-            )}
 
-            {/* Failed Banner */}
-            {jobProgress.done && jobProgress.state === 'failed' && (
-              <div className="alert alert-error" style={{ padding: 20 }}>
-                <XCircle size={20} />
-                <div style={{ flex: 1 }}>
-                  <strong style={{ fontSize: 15 }}>Generation Failed After Retries</strong>
-                  <div style={{ marginTop: 4, fontSize: 13 }}>
-                    {jobProgress.failedReason || 'Internal engine error during adversarial loop.'}
-                  </div>
-                  <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={startNew}>
-                    Try Again
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 24, fontWeight: 800, fontFamily: 'var(--font-display)', color: 'var(--color-primary)' }}>
+                  {job?.progress ?? 0}%
+                </span>
+                {job && !job.done && job.kind === 'GENERATE' && (
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => jobAction.mutate('cancel')}
+                    disabled={jobAction.isPending || !!job.cancelledAt}
+                  >
+                    {job.cancelledAt ? 'Cancelling…' : 'Cancel'}
                   </button>
-                </div>
+                )}
+                {job?.done && (
+                  <>
+                    {job.kind === 'GENERATE' && job.counts.failed > 0 && (
+                      <button className="btn btn-secondary btn-sm" onClick={() => jobAction.mutate('retry-failed')} disabled={jobAction.isPending}>
+                        Retry {job.counts.failed} failed
+                      </button>
+                    )}
+                    <button className="btn btn-secondary btn-sm" onClick={startNew}>New Batch</button>
+                    {job.counts.validated > 0 && (
+                      <button className="btn btn-primary btn-sm" onClick={() => navigate('/dashboard/review')}>
+                        Open Review Queue →
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {actionError && (
+              <div className="alert alert-error" style={{ marginBottom: 12 }}>
+                <AlertCircle size={15} /> <span>{actionError}</span>
+              </div>
+            )}
+
+            <JobProgress status={job} />
+
+            {job?.done && job.counts.failed > 0 && (
+              <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
+                Failed questions are kept in the Question Bank with status FAILED and the validator's full report.
               </div>
             )}
           </div>
@@ -325,16 +216,14 @@ export default function GeneratePage() {
               </div>
 
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">LLM Provider (BYOK Model Routing)</label>
+                <label className="form-label">LLM Provider</label>
                 <select
                   className="form-select"
                   value={config.llmProvider}
                   onChange={e => setConfig(c => ({ ...c, llmProvider: e.target.value }))}
                 >
                   {LLM_PROVIDERS.map(p => (
-                    <option key={p} value={p}>
-                      {p === 'gemini' ? 'Google Gemini 1.5 Pro' : p === 'anthropic' ? 'Anthropic Claude 3.5 Sonnet' : 'OpenAI GPT-4o'}
-                    </option>
+                    <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>
                   ))}
                 </select>
               </div>
@@ -434,6 +323,14 @@ export default function GeneratePage() {
                 ))}
               </div>
 
+              {config.questionTypes.length > 0 && (
+                <ul style={{ margin: '14px 0 0', paddingLeft: 18, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                  {config.questionTypes.map(t => (
+                    <li key={t}><strong style={{ color: 'var(--text-secondary)' }}>{t}</strong> — {VALIDATION_NOTES[t]}</li>
+                  ))}
+                </ul>
+              )}
+
               {config.questionTypes.includes('MCQ') && (
                 <div style={{ marginTop: 18, paddingTop: 18, borderTop: '1px solid var(--border-light)' }}>
                   <div className="slider-header">
@@ -455,7 +352,7 @@ export default function GeneratePage() {
 
             {/* Languages Card */}
             <div className="card animate-fade-in animate-delay-3">
-              <div className="card-title">Execution Languages (Piston Sandbox)</div>
+              <div className="card-title">Execution Languages (DSA only)</div>
               <div className="checkbox-grid">
                 {LANGUAGES.map(l => (
                   <label key={l} className={`checkbox-chip ${config.languages.includes(l) ? 'selected' : ''}`}>
@@ -471,12 +368,12 @@ export default function GeneratePage() {
               </div>
             </div>
 
-            {/* Quantity & Incurred Cost Estimator */}
+            {/* Quantity */}
             <div className="card animate-fade-in animate-delay-4" style={{
               background: 'linear-gradient(180deg, rgba(244,63,94,0.06) 0%, rgba(15,22,38,0.9) 100%)',
               borderColor: 'rgba(244,63,94,0.3)'
             }}>
-              <div className="card-title">Batch Sizing & Incurred Cost</div>
+              <div className="card-title">Batch Size</div>
               
               <div className="form-group">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -505,43 +402,17 @@ export default function GeneratePage() {
                 />
               </div>
 
-              <div style={{ display: 'flex', gap: 16 }}>
-                <div style={{
-                  flex: 1,
-                  background: 'rgba(0, 0, 0, 0.4)',
-                  padding: '16px',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--border-light)'
-                }}>
-                  <div style={{ color: 'var(--text-muted)', fontSize: 11, marginBottom: 4, fontWeight: 700, letterSpacing: '0.05em' }}>
-                    EST. LLM TOKENS
-                  </div>
-                  <div style={{ fontWeight: 800, fontSize: 24, color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}>
-                    ~{estimatedTokens.toLocaleString()}
-                  </div>
-                </div>
-
-                <div style={{
-                  flex: 1,
-                  background: 'rgba(0, 0, 0, 0.4)',
-                  padding: '16px',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--border-light)'
-                }}>
-                  <div style={{ color: 'var(--text-muted)', fontSize: 11, marginBottom: 4, fontWeight: 700, letterSpacing: '0.05em' }}>
-                    EST. COST (USD)
-                  </div>
-                  <div style={{ fontWeight: 800, fontSize: 24, color: 'var(--color-success)', fontFamily: 'var(--font-display)' }}>
-                    ${estimatedCost}
-                  </div>
-                </div>
+              <div style={{ fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Each question is its own job and may take up to 3 drafting attempts. Actual token usage
+                {' '}and cost are measured and shown live once the batch starts — no estimate is shown here
+                {' '}because it would only be a guess.
               </div>
 
               <button
                 className="btn btn-primary btn-lg"
                 style={{ width: '100%', justifyContent: 'center', marginTop: 24, height: 48, fontSize: 15 }}
                 onClick={() => mutation.mutate()}
-                disabled={mutation.isPending || !diffValid || config.topics.length === 0 || config.questionTypes.length === 0 || (!!jobId && !jobProgress.done)}
+                disabled={mutation.isPending || !diffValid || config.topics.length === 0 || config.questionTypes.length === 0 || (config.questionTypes.includes('DSA') && config.languages.length === 0) || jobRunning}
               >
                 {mutation.isPending ? (
                   <>
@@ -567,6 +438,8 @@ export default function GeneratePage() {
           </div>
 
         </div>
+
+        <JobHistory activeJobId={jobId} onSelect={(id) => { setActionError(null); setJobId(id); }} refreshKey={`${jobId}-${job?.done}-${run}`} />
 
       </div>
     </>

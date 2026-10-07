@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import axios from 'axios';
 import AdminPage from './AdminPage';
+import { AuthProvider } from '../context/AuthContext';
 
 vi.mock('axios');
 
@@ -10,7 +11,9 @@ function renderAdminPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <AdminPage />
+      <AuthProvider>
+        <AdminPage />
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

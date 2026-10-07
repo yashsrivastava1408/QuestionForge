@@ -1,31 +1,31 @@
 import { Queue } from 'bullmq';
 import { redisConnection } from '../utils/redis.js';
-import type { GenerationWizardConfig } from '@question-forge/shared';
 
 export interface GenerationJobData {
-  jobId: string;
-  config: GenerationWizardConfig;
+  /** GenerationItem.id — one BullMQ job per question slot. */
+  itemId: string;
 }
 
+export const GENERATION_JOB_ATTEMPTS = 3;
+
 /**
- * BullMQ Queue for generation jobs.
- * Jobs are persisted in Redis — surviving server restarts and crashes.
- * Replaces the previous fire-and-forget _runPipelineAsync pattern.
+ * BullMQ queue for generation work. Each job is ONE question, so:
+ *  - a crash or retry repeats one question, never a whole batch;
+ *  - questions in a batch run in parallel up to WORKER_CONCURRENCY;
+ *  - progress is real (items finished / items total), not an estimate.
+ *
+ * A job only throws for infrastructure problems (LLM provider down, sandbox
+ * unreachable). A question that fails validation is a normal, completed job.
  */
 export const generationQueue = new Queue<GenerationJobData>('generation', {
   connection: redisConnection,
   defaultJobOptions: {
-    attempts: 3,
+    attempts: GENERATION_JOB_ATTEMPTS,
     backoff: {
       type: 'exponential',
-      delay: 5000, // 5s, 10s, 20s
+      delay: Number(process.env.GENERATION_RETRY_DELAY_MS ?? 5000), // 5s, 10s
     },
-    removeOnComplete: {
-      age: 24 * 3600, // keep completed jobs for 24h for status polling
-      count: 500,
-    },
-    removeOnFail: {
-      age: 7 * 24 * 3600, // keep failed jobs for 7 days for debugging
-    },
+    removeOnComplete: { age: 24 * 3600, count: 2000 },
+    removeOnFail: { age: 7 * 24 * 3600 },
   },
 });

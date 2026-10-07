@@ -29,7 +29,8 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # noeviction: BullMQ keeps its queues in Redis, so Redis must never evict keys to free memory.
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

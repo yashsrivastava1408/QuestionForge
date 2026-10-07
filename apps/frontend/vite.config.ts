@@ -10,6 +10,11 @@ export default defineConfig({
         target: process.env.VITE_API_URL || 'http://localhost:4000',
         changeOrigin: true,
       },
+      // Bull Board UI is served by the API; proxying it keeps its session cookie same-origin.
+      '/admin/queues': {
+        target: process.env.VITE_API_URL || 'http://localhost:4000',
+        changeOrigin: true,
+      },
     },
   },
 });

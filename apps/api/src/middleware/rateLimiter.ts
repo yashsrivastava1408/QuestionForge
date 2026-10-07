@@ -1,4 +1,5 @@
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import type { Request } from 'express';
 import { RedisStore } from 'rate-limit-redis';
 import { redisClient } from '../utils/redis.js';
 
@@ -41,13 +42,19 @@ export function createRateLimiter(options: RateLimiterOptions) {
 
 /**
  * Stricter rate limiter for the generate endpoint.
- * 5 generation requests per minute per user — protects LLM API spend.
+ * 5 generation requests per minute per user (GENERATE_RATE_LIMIT_PER_MIN) — protects LLM API spend.
  */
+/** Counts per signed-in user (this limiter runs after `authenticate`), falling back to the client address. */
+const perUserKey = (req: Request) => (req.user?.userId ? `user:${req.user.userId}` : ipKeyGenerator(req.ip ?? ''));
+
+const GENERATE_LIMIT_PER_MIN = Number(process.env.GENERATE_RATE_LIMIT_PER_MIN ?? 5);
+
 export const generateRateLimiter = process.env.NODE_ENV === 'test'
-  ? rateLimit({ windowMs: 60_000, limit: 5, legacyHeaders: false })
+  ? rateLimit({ windowMs: 60_000, limit: GENERATE_LIMIT_PER_MIN, legacyHeaders: false, keyGenerator: perUserKey })
   : rateLimit({
       windowMs: 60_000,
-      limit: 5,
+      limit: GENERATE_LIMIT_PER_MIN,
+      keyGenerator: perUserKey,
       message: 'Generation rate limit exceeded. Please wait before generating again.',
       standardHeaders: 'draft-7',
       legacyHeaders: false,

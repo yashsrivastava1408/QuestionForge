@@ -1,867 +1,476 @@
 <div align="center">
-  <img src="./assets/hero-banner.png" alt="Question Forge — The Enterprise-Grade AI Validation Engine" width="100%" />
+  <img src="./assets/hero-banner.png" alt="Question Forge" width="100%" />
 
   <br />
   <br />
 
   <h1>Question Forge</h1>
-  <p><strong>Enterprise-Grade Multi-Agent AI Assessment Generation, Code Execution & Validation Platform</strong></p>
+  <p><strong>Generates technical interview questions with an LLM — then checks them before a human ever sees them.</strong></p>
 
   <p>
     <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" /></a>
     <a href="https://github.com/yashsrivastava1408/QuestionForge/actions/workflows/ci.yml"><img src="https://github.com/yashsrivastava1408/QuestionForge/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-    <img src="https://img.shields.io/badge/React-18-blue" alt="React" />
     <img src="https://img.shields.io/badge/Node-20%2B-green" alt="Node" />
     <img src="https://img.shields.io/badge/TypeScript-5.4-blue" alt="TypeScript" />
-    <img src="https://img.shields.io/badge/Turborepo-Monorepo-blue" alt="Turborepo" />
-    <img src="https://img.shields.io/badge/Prisma-ORM-teal" alt="Prisma" />
-    <img src="https://img.shields.io/badge/Docker-Enabled-blue" alt="Docker" />
+    <img src="https://img.shields.io/badge/React-18-blue" alt="React" />
+    <img src="https://img.shields.io/badge/Postgres-16-blue" alt="Postgres" />
     <img src="https://img.shields.io/badge/Redis-BullMQ-red" alt="Redis" />
-    <img src="https://img.shields.io/badge/Bull%20Board-Live%20Dashboard-orange" alt="Bull Board" />
-    <img src="https://img.shields.io/badge/Vitest-Unit%20%26%20Integration-yellow" alt="Vitest" />
-    <img src="https://img.shields.io/badge/AWS-Terraform-orange" alt="AWS" />
     <a href="https://github.com/yashsrivastava1408/QuestionForge/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" /></a>
   </p>
 </div>
 
-Question Forge is an open-source, multi-agent AI orchestration platform engineered for enterprise HR and technical recruiting organizations. It automates the generation, rigorous algorithmic validation, human-in-the-loop review, and secure export of technical interview questions (Data Structures & Algorithms, Object-Oriented Design, System Design, SQL, and Conceptual MCQs).
+Question Forge drafts DSA, SQL, MCQ, OOP, conceptual and system-design questions for hiring assessments. An LLM writes each one; something other than that LLM then checks it. Coding and SQL questions are checked by **running code**. The rest are checked by an **independent LLM review**. Whatever passes goes to a human review queue, and approved questions are assembled into papers and exported.
 
-By combining a **LangGraph generate/validate retry state machine**, **isolated Docker sandboxed code execution**, **decoupled BullMQ worker processes**, and **feature-hashed semantic deduplication**, Question Forge produces verified, hallucination-free technical assessments at enterprise scale without data loss.
-
----
-
-## Table of Contents
-- [Architecture & Deep Technical Documentation (`docs/`)](./docs/README.md)
-- [Key Enterprise Capabilities](#key-enterprise-capabilities)
-- [Technology Stack](#technology-stack)
-- [Monorepo Architecture & Directory Structure](#monorepo-architecture--directory-structure)
-- [System Architecture](#system-architecture)
-- [Core Workflows & Diagrams](#core-workflows--diagrams)
-  - [1. Distributed Job Queue & SSE Progress Streaming](#1-distributed-job-queue--sse-progress-streaming)
-  - [2. LangGraph Generate → Validate → Retry Pipeline](#2-langgraph-generate--validate--retry-pipeline)
-  - [3. High-Concurrency Sandboxed Code Execution](#3-high-concurrency-sandboxed-code-execution)
-  - [4. Asynchronous Webhook Delivery Engine](#4-asynchronous-webhook-delivery-engine)
-  - [5. Question Review & Lifecycle State Machine](#5-question-review--lifecycle-state-machine)
-  - [6. Zero-Downtime CI/CD Pipeline & Automated Rollback](#6-zero-downtime-cicd-pipeline--automated-rollback)
-- [Database Schema & ERD](#database-schema--erd)
-- [Quantitative Scalability Specifications & Benchmarks](#quantitative-scalability-specifications--benchmarks)
-- [Scalability & Reliability Matrix](#scalability--reliability-matrix)
-- [Enterprise Security Architecture](#enterprise-security-architecture)
-- [REST API Reference](#rest-api-reference)
-- [Automated Testing Suite (Vitest)](#automated-testing-suite-vitest)
-- [Environment Variables](#environment-variables)
-- [Local Development & Seeding](#local-development--seeding)
-- [Production Deployment (AWS / Terraform / Docker)](#production-deployment-aws--terraform--docker)
-- [Roadmap & Future Extensions](#roadmap--future-extensions)
-- [Contributing](#contributing)
-- [License](#license)
-
-> [!NOTE]
-> **Looking for in-depth architectural specifications and operational runbooks?**
-> Visit the [Question Forge Enterprise Documentation Hub (`docs/`)](./docs/README.md) for deep dives into:
-> - [System Overview & Decoupled Compute](./docs/architecture/system-overview.md)
-> - [LangGraph Generate/Validate Retry Engine](./docs/architecture/multi-agent-debate.md)
-> - [Piston Sandboxed Code Execution & Differential Testing](./docs/architecture/sandboxed-execution.md)
-> - [Real-World Question Ingestion (LeetCode / GFG)](./docs/architecture/ingestion-pipeline.md)
-> - [BullMQ Distributed Queue & Worker Engine](./docs/architecture/queue-and-worker-engine.md)
-> - [Database Schema, ERD & Composite Indexing](./docs/database/schema-and-indexing.md)
-> - [Feature-Hashed Vector Deduplication](./docs/database/vector-deduplication.md)
-> - [Enterprise Security Architecture Whitepaper](./docs/security/security-whitepaper.md)
-> - [Production Deployment & SRE Incident Runbook](./docs/operations/deployment-and-runbook.md)
-> - [Quantitative Scalability & Throughput Benchmarks](./docs/operations/scalability-and-benchmarks.md)
+An LLM is good at writing a plausible question and bad at knowing whether it is right. The whole design follows from not trusting what the model claims.
 
 ---
 
----
+## Contents
 
-## Key Enterprise Capabilities
-
-1. **LangGraph Generate → Validate → Retry Pipeline:**
-   Rather than relying on single-shot LLM prompts, Question Forge runs every question through a real `@langchain/langgraph` `StateGraph` (`packages/ai-orchestration`): a **Generate** node drafts (or revises) the problem, and a **Validate** node judges it — sandbox differential execution for DSA problems, a cross-model LLM debate for OOPS/conceptual ones — feeding rejection feedback back into the next `Generate` call, up to 3 attempts, before the graph settles on `VALIDATED` or `FAILED`. The same engine (`runGenerateValidateGraph`) backs both the `runDsaGenerationGraph` and `runOopsDebateGraph` entry points.
-
-2. **Parallel Sandboxed Code Execution:**
-   Every generated coding problem is tested in an isolated Piston container sandbox across multiple languages (Python, Java, C++, JavaScript). Edge-case suites are executed against both optimal and brute-force solutions simultaneously using concurrency-capped worker pools (`p-limit`), slashing validation latency by over 10×.
-
-3. **Decoupled Background Worker Process (`apps/api/src/worker.ts`):**
-   HTTP request handling is cleanly isolated from CPU- and memory-intensive AI orchestration and sandbox code verification. In production, dedicated worker processes consume BullMQ queues independently, with auto-scaling governed by queue depth, while stateless Express API replicas handle incoming traffic without risking Event Loop starvation.
-
-4. **Crash-Resilient Distributed Queues (BullMQ + Redis):**
-   Generation jobs and outbound webhook deliveries run through separate BullMQ queues backed by Redis with persistence. If an API or worker container restarts mid-generation, jobs persist in Redis and resume automatically. Real-time generation progress is streamed to clients via Server-Sent Events (SSE).
-
-5. **Clean Layered Controller Architecture:**
-   HTTP route files in `apps/api/src/routes/` serve exclusively as thin delegators. All business logic, input sanitization, database mutations, and queue dispatching reside in dedicated, single-responsibility controller modules (`authController`, `questionsController`, `papersController`, `exportController`, `adminController`, `webhooksController`, and `analyticsController`).
-
-6. **Independent Asynchronous Webhook Delivery:**
-   Approved questions and exported papers trigger outbound webhook notifications to customer ATS/LMS platforms. Deliveries are decoupled from HTTP request loops, signed with cryptographic HMAC-SHA256 signatures, and backed by a 5-tier exponential backoff retry mechanism.
-
-7. **Deterministic Feature-Hashed Deduplication:**
-   Every candidate statement is embedded via 32-bit FNV-1a feature hashing into a 256-dimensional, L2-normalized vector (`deduplicationService.ts`) — no embedding API call, no network dependency. Cosine similarity (dot product of normalized vectors) is computed in application code against an organization's most recent 300 questions; anything ≥ 0.88 similarity is rejected as a duplicate. Postgres runs on the `pgvector`-enabled image so a future migration to native in-database ANN search is a schema change away, not a rewrite — that migration hasn't been made yet, so today's dedup is application-level, not a `pgvector` index query.
-
-8. **Hardened Multi-Tenancy & Zero-Trust Security:**
-   - Stateless JWT tokens paired with an **instant Redis JTI Revocation Blacklist** on logout.
-   - Strict organization-boundary authorization ensuring zero cross-tenant leakage.
-   - Strict Zod mutation schemas protecting against mass-assignment vulnerabilities.
-   - Puppeteer PDF rendering sanitized against HTML injection and XSS.
-   - Direct-to-S3 asset storage with ephemeral presigned URLs.
-
-9. **Enterprise Monorepo Pipeline (Turborepo 2.x):**
-   Coordinated monorepo task orchestration across `apps/*` and `packages/*` with deterministic caching, topological dependency graph execution, and sub-10ms incremental build checks.
-
-10. **Automated Testing Suite (Vitest + Testing Library + Supertest):**
-    48 tests across all 5 workspaces — the LangGraph retry engine, the Piston sandbox client, the LeetCode/GFG ingestion adapters, API controllers/services, and frontend pages — run without any live Postgres/Redis/LLM dependency. See [Automated Testing Suite](#automated-testing-suite-vitest) below.
-
-11. **Live Bull Board Queue Monitoring (`/admin/queues`):**
-    Embedded `@bull-board/express` dashboard protected by admin JWT authentication. Allows operations teams to inspect active and completed generation jobs, view failure stack traces, retry dead-letter jobs with 1-click, and monitor webhook delivery backoffs in real time.
-
-12. **Real-World Question Ingestion (LeetCode / GeeksforGeeks):**
-    `packages/ai-orchestration` and `packages/sandbox` cover generation and execution; `packages/ingestion` covers sourcing real problems. `POST /api/ingestion/fetch` (single problem by slug) and `POST /api/ingestion/fetch-category` (a LeetCode tag, batched) pull a real statement and stage it as a `DRAFT` question — exposed in the Admin console's **Import Questions** tab — for a reviewer to complete or regenerate solutions for, distinct from the AI generation pipeline.
+- [What "validated" means](#what-validated-means)
+- [How it works](#how-it-works)
+- [Features](#features)
+- [Project status — what is and is not verified](#project-status--what-is-and-is-not-verified)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [API reference](#api-reference)
+- [Testing](#testing)
+- [Production](#production)
+- [Repository layout](#repository-layout)
+- [Documentation](#documentation)
+- [Not built yet](#not-built-yet)
+- [Contributing](#contributing) · [License](#license)
 
 ---
 
-## Technology Stack
+## What "validated" means
 
-| Layer | Technologies |
+It depends on the question type, and the app always says which one applied.
+
+| Type | How it is checked | Is code executed? |
+|---|---|:---:|
+| **DSA** | Every solution, in every requested language, is run against a brute-force oracle on hand-written **and randomly generated** inputs. The statement's examples must match the executed output. On a maximum-size input the optimal solution must finish in 3 s and the brute force must be clearly slower. Then a second model writes its own solution **from the statement alone**, and that program must print the same answers. | ✅ |
+| **SQL** | Two independently written queries run in SQLite on several datasets and must return the same rows. | ✅ |
+| **MCQ / OOPS / Conceptual** | A second model answers the question **without seeing the answer key** and must land on it. Then an adversary looks for defects and a judge rules on them. | — |
+| **System design** | The grading rubric is checked for structure, then reviewed by an adversary and a judge. | — |
+
+For the last two rows there is nothing to execute, so the result is an informed opinion, not a proof — which is why every question still goes through a human before it is used. The UI labels these "LLM-reviewed (not executed)" rather than implying more.
+
+Details: [Generate → Validate → Retry Engine](./docs/architecture/multi-agent-debate.md) · [Sandboxed Execution & Differential Validation](./docs/architecture/sandboxed-execution.md)
+
+---
+
+## How it works
+
+```mermaid
+flowchart TD
+    U["Generate 10 questions"] --> API["API: one job per question"]
+    API --> Q[["Redis / BullMQ queue"]]
+    Q --> W["Worker"]
+
+    subgraph Loop ["Per question: up to 3 attempts"]
+        G["LLM drafts the question as JSON"] --> D{"Near-copy of an\nexisting question?"}
+        D -- yes --> FB["Feedback to the LLM"]
+        D -- no --> V{"Validate\nsandbox execution or independent review"}
+        V -- failed --> FB
+        FB --> G
+    end
+
+    W --> G
+    V -- passed --> OK(["VALIDATED"])
+    V -- "failed 3 times" --> F(["FAILED, with the reason"])
+    OK --> R["Human review queue"]
+    R --> A(["APPROVED"]) --> P["Paper"] --> E["Export: PDF / JSON"]
+```
+
+When validation fails, the validator's report — for example *"Optimal solution (java) printed 0 but the brute force printed -1 on input …"* — is sent back to the model with its previous draft, and it tries again.
+
+---
+
+## Features
+
+**Generation**
+- One background job per question: questions in a batch run in parallel, and a crash or retry repeats one question, not the batch.
+- Live progress for every question — the step it is on and, if it failed, why.
+- Measured token usage and cost per batch (no estimates).
+- Anthropic, OpenAI and Gemini; server-wide keys or each organization's own key, encrypted at rest.
+- Duplicate detection against the organization's bank, including twins produced in the same batch.
+- **Cancel** a running job, **retry only the failed questions** of a finished one, and browse **recent jobs**.
+- A background sweeper recovers questions whose queue job was lost, so nothing stays "in progress" forever.
+
+**Validation**
+- Differential testing in Python, Java, C++ and JavaScript inside a Piston sandbox.
+- Expected outputs come from execution, not from the model.
+- A difficulty check: a "medium" or "hard" problem that brute force solves at maximum size is rejected.
+- **Independent solver:** a second model solves each coding problem from the statement alone; if its program disagrees with the reference solutions, the statement is ambiguous or the solutions are wrong, and the draft is rejected.
+- SQL validated by running two queries in SQLite.
+- Blind-solve + adversarial review for non-executable questions, by a different provider when one is configured. It **fails closed**: an unreadable reviewer reply is never treated as a pass.
+
+**Review and editing**
+- Review queue with approve / reject — one at a time or **in bulk** — plus version history and an audit log.
+- Reviewers can edit any part of a question. Editing its content sends it back through validation; it cannot be approved until it passes again.
+- Import a problem statement from LeetCode or GeeksforGeeks as a draft, then have solutions and tests generated and validated for it. *(Imported statements belong to their source — see [the note on rights](./docs/architecture/ingestion-pipeline.md#rights-to-imported-content).)*
+
+**Papers, export, integration**
+- **Paper builder:** describe the paper as a blueprint ("2 easy DSA, 1 SQL, 5 MCQ") and it is drawn at random from approved questions, never the same one twice. Reorder or remove questions afterwards.
+- Export candidate PDFs, internal PDFs (with answers and reference solutions) or JSON.
+- Export to S3, or to local disk when S3 is not configured.
+- HMAC-signed webhooks (`question.validated`, `question.approved`, `question.rejected`, `generation.completed`) with retries.
+
+**Accounts**
+- Users change their own password; admins add users, reset passwords, change roles, and deactivate or reactivate accounts.
+- Deactivation, password changes and role changes take effect immediately: existing sessions are signed out.
+- An organization's last admin cannot be removed.
+
+**Analytics**
+- Pass rate and average attempts per question type, measured spend, **cost per validated question**, the reasons questions fail, and the human approval rate.
+
+**Operations**
+- API and workers run as separate processes in production.
+- Multi-tenant: every query is scoped to the caller's organization.
+- Roles: Admin, Reviewer, Generator.
+- Bull Board queue dashboard for admins.
+
+---
+
+## Project status — what is and is not verified
+
+**Verified by tests in this repository**
+
+- 172 unit tests across 5 workspaces. Those for the validation engine run **real** Python, JavaScript, C++, Java and SQLite programs.
+- 49 end-to-end tests against a real Postgres, Redis, BullMQ queue and workers, with real code execution, webhook delivery and PDF export. Only the LLM is scripted.
+- CI applies the migrations to a fresh database and runs both suites.
+
+**Not verified — check these yourself before relying on it**
+
+| | |
 |---|---|
-| **Monorepo Engine** | Turborepo 2.x, npm Workspaces |
-| **Frontend SPA** | React 18, TypeScript 5.4, Vite, Tailwind CSS, Lucide Icons, TanStack React Query, React Router |
-| **API Server** | Node.js (v20+), Express.js, Layered Controllers, TypeScript, Zod Schema Validation |
-| **Dedicated Worker** | Standalone BullMQ Worker runtime (`worker.ts`) with graceful `SIGTERM`/`SIGINT` draining |
-| **AI Orchestration** | `@langchain/langgraph` `StateGraph` (`packages/ai-orchestration`), OpenAI SDK, Anthropic SDK, Google Gen AI SDK |
-| **Question Ingestion** | `packages/ingestion` — LeetCode GraphQL + GFG/Cheerio adapters |
-| **Automated Testing** | Vitest, Testing Library, Supertest, In-memory Redis/DB mocks |
-| **Queues & Caching** | Redis 7, BullMQ (Independent Generation & Webhook queues), ioredis |
-| **Database & Vector** | PostgreSQL 16 (`pgvector`-enabled image), Prisma ORM, Composite B-Tree Indexes; deduplication vectors currently compared in application code (see [Key Enterprise Capabilities](#key-enterprise-capabilities)) |
-| **Execution Sandbox** | Piston (Isolated Docker containers with 512MB RAM / 0.75 CPU quota per instance), shared client in `packages/sandbox` |
-| **PDF & Export** | Puppeteer (Headless Chromium with HTML entity escaping), AWS S3 SDK |
-| **Infrastructure & IaC** | Docker Compose, Terraform (AWS EC2, RDS, ElastiCache, S3), GitHub Actions CI/CD |
+| Live LLMs | The prompts have only been exercised with a scripted model. Real pass rates per provider are unknown until you run a batch. |
+| Real Piston | The Piston client is tested with mocked HTTP; real-execution tests use a local process runner. |
+| Browser | Frontend tests run in jsdom. Nothing drives the UI in a real browser. |
+| Load | No load test has been run. There are no throughput numbers. |
+| Docker / AWS | Compose files, Dockerfiles and Terraform were not built or applied as part of the latest changes. |
+
+More in [Testing](./docs/operations/testing.md) and [Capacity Planning](./docs/operations/scalability-and-benchmarks.md).
 
 ---
 
-## Monorepo Architecture & Directory Structure
+## Quick start
 
-Question Forge is structured as a modular, enterprise-grade monorepo managed by **Turborepo**:
-
-```text
-question-forge/
-├── apps/
-│   ├── api/                                # Backend Express API & Worker Service
-│   │   ├── src/
-│   │   │   ├── controllers/                # Layered Controller Modules
-│   │   │   │   ├── adminController.ts      # User role management, queue monitoring
-│   │   │   │   ├── analyticsController.ts  # Cached metrics & export breakdowns
-│   │   │   │   ├── authController.ts       # Registration, login, Redis JTI blacklist
-│   │   │   │   ├── exportController.ts     # S3 PDF/JSON generation & presigned URLs
-│   │   │   │   ├── ingestionController.ts  # LeetCode/GFG ingestion -> DRAFT questions
-│   │   │   │   ├── papersController.ts     # Assessment bundle management
-│   │   │   │   ├── questionsController.ts  # CRUD, reviews, history snapshots
-│   │   │   │   └── webhooksController.ts   # ATS/LMS HMAC webhook configurations
-│   │   │   ├── routes/                     # Slim HTTP Route Delegators
-│   │   │   ├── middleware/                 # Auth, RBAC, Redis rate limiters, validation
-│   │   │   ├── services/                   # generationService, validationService, llmService,
-│   │   │   │                               # agentDebateService, deduplicationService, ...
-│   │   │   ├── queues/                     # BullMQ generation & webhook queues + workers
-│   │   │   ├── __tests__/                  # Vitest Automated Test Suite (6 files, 26 tests)
-│   │   │   ├── index.ts                    # HTTP server entry point (stateless in prod)
-│   │   │   └── worker.ts                   # Standalone BullMQ Worker process entry point
-│   │   ├── vitest.config.ts                # Vitest test runner configuration
-│   │   └── Dockerfile                      # Dual-mode production container image
-│   │
-│   └── frontend/                           # Client-side React 18 SPA
-│       ├── src/
-│       │   ├── components/                 # Reusable UI component library
-│       │   ├── pages/                      # Generator, Review, Papers, Analytics, Admin views
-│       │   ├── context/                    # AuthContext (JWT session state)
-│       │   └── *.test.tsx                  # Vitest + Testing Library component tests
-│       ├── vitest.config.ts                # Vitest + jsdom test runner configuration
-│       ├── vite.config.ts                  # Vite bundler configuration
-│       └── Dockerfile                      # Production Nginx container image
-│
-├── packages/
-│   ├── shared/                             # Domain types, Zod contracts, Prisma schema
-│   │   ├── prisma/
-│   │   │   ├── schema.prisma               # Canonical DB schema
-│   │   │   ├── seed.ts                     # Database seeding script (Admin/Reviewer)
-│   │   │   └── migrations/                 # Versioned SQL migration history
-│   │   └── src/types/                      # Shared domain types & Zod contracts
-│   │
-│   ├── ai-orchestration/                   # Real LangGraph engine (StateGraph + Annotation)
-│   │   └── src/graphs/
-│   │       ├── generateValidateGraph.ts    # The actual state machine (generate -> validate -> retry)
-│   │       ├── dsaGenerationGraph.ts       # Typed wrapper for DSA questions
-│   │       └── oopsDebateGraph.ts          # Typed wrapper for OOPS/conceptual questions
-│   │
-│   ├── sandbox/                            # Piston client — the single source of truth,
-│   │   └── src/pistonClient.ts             # imported by apps/api, not duplicated
-│   │
-│   └── ingestion/                          # Real-world problem sourcing
-│       └── src/adapters/
-│           ├── leetcode.ts                 # LeetCode GraphQL adapter (single + by-category)
-│           └── gfg.ts                      # GeeksforGeeks/Cheerio adapter
-│
-├── infra/
-│   └── terraform/                          # Production AWS Infrastructure as Code
-│       ├── main.tf                         # VPC, Security Groups, EC2 ASG, S3
-│       └── outputs.tf                      # ALB DNS, RDS & ElastiCache endpoints
-│
-├── .github/
-│   └── workflows/
-│       ├── ci.yml                          # Lint, typecheck, test (real Postgres+Redis), build
-│       └── deploy-backend.yml              # CI/CD: Turbo test -> Migrate -> Rolling restart
-│
-├── docker-compose.yml                      # Local development infrastructure stack
-├── docker-compose.prod.yml                 # Production overrides (Decoupled API + Worker)
-├── turbo.json                              # Turborepo task pipeline configuration
-└── package.json                            # Root workspaces & developer scripts
-```
-
----
-
-## System Architecture
-
-```mermaid
-flowchart TD
-    subgraph Clients ["Client Layer"]
-        SPA["React 18 SPA (Vite + Tailwind)"]
-        SSE_Stream["SSE Live Progress Listener"]
-    end
-
-    subgraph Gateway ["Ingress & Security"]
-        Proxy["Reverse Proxy / AWS ALB"]
-        RL["Redis Rate Limiter\n(express-rate-limit)"]
-        AuthMid["JWT Auth + Redis JTI Revocation Check"]
-    end
-
-    subgraph API_Cluster ["Stateless Express API Cluster (apps/api)"]
-        API_Replicas["API Pods / Replicas (xN)"]
-        Router["Thin Route Delegators"]
-        Controllers["Layered Controllers:\nAuth | Questions | Papers | Export | Admin | Webhooks | Analytics"]
-    end
-
-    subgraph Distributed_State ["Distributed State (Redis 7)"]
-        Bull_Gen["BullMQ: 'generation' Queue"]
-        Bull_Hook["BullMQ: 'webhooks' Queue"]
-        Cache_Analytics["Redis Cache (Analytics TTL 60-120s)"]
-        Blacklist["Redis JTI Token Blacklist"]
-    end
-
-    subgraph Worker_Cluster ["Dedicated Worker Cluster (apps/api/src/worker.ts)"]
-        Worker_Pods["Worker Pods / Replicas (Auto-scaled)"]
-        Gen_Worker["Generation Worker\n(Concurrency: 5-15)"]
-        Hook_Worker["Webhook Delivery Worker\n(Concurrency: 10)"]
-        SigDrain["Graceful SIGTERM/SIGINT\nJob Draining"]
-    end
-
-    subgraph AI_Engine ["LangGraph Generate/Validate Engine (packages/ai-orchestration)"]
-        Generate["Generate Node\n(Draft or Revise via LLM)"]
-        Validate["Validate Node\nDSA: Sandbox Diff Test\nOOPS: Cross-Model Adversary+Judge Debate"]
-    end
-
-    subgraph Execution ["Sandboxed Execution"]
-        PistonPool["Piston Docker Sandbox Pool\n(p-limit Parallel Semaphore)"]
-    end
-
-    subgraph Storage ["Persistent Storage Layer"]
-        Postgres[("PostgreSQL 16 + pgvector\n(Questions, Users, Audits, Embeddings)")]
-        S3[("AWS S3 Bucket\n(Watermarked PDFs & JSON Exports)")]
-    end
-
-    subgraph External ["External ATS / LMS Integrations"]
-        LMS["Customer ATS / LMS\n(Greenhouse, Lever, Canvas)"]
-    end
-
-    SPA --> Proxy
-    SSE_Stream --> Proxy
-    Proxy --> RL --> AuthMid --> API_Replicas
-    API_Replicas --> Router --> Controllers
-
-    Controllers --> Bull_Gen
-    Controllers --> Bull_Hook
-    Controllers --> Cache_Analytics
-    Controllers --> Postgres
-    Controllers --> S3
-    AuthMid --> Blacklist
-
-    Bull_Gen --> Worker_Pods
-    Bull_Hook --> Worker_Pods
-    Worker_Pods --> Gen_Worker & Hook_Worker
-    Worker_Pods --> SigDrain
-
-    Gen_Worker --> AI_Engine
-    Generate --> Validate
-    Validate -->|"FAIL, retries left"| Generate
-    Gen_Worker --> PistonPool
-    Gen_Worker --> Postgres
-
-    Hook_Worker -->|HMAC-SHA256 Signed POST| LMS
-```
-
----
-
-## Core Workflows & Diagrams
-
-### 1. Distributed Job Queue & SSE Progress Streaming
-
-Question generation is executed asynchronously to handle deep multi-agent deliberation and multi-language test validation without blocking HTTP connections:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Client / Browser
-    participant API as Stateless Express API
-    participant Redis as Redis 7 (BullMQ)
-    participant Worker as Dedicated Worker (worker.ts)
-    participant LangGraph as LangGraph Generate/Validate Graph
-    participant Sandbox as Piston Sandbox (Parallel)
-    participant DB as Postgres
-
-    User->>API: POST /api/generate (Topic, Difficulty, Langs)
-    API->>Redis: Enqueue job in 'generation' queue
-    API-->>User: 202 Accepted { jobId, statusUrl, streamUrl }
-
-    User->>API: GET /api/generate/status/:jobId/stream?token=JWT (SSE)
-    API-->>User: SSE Connection Established (keep-alive)
-
-    Redis->>Worker: Dequeue generation job
-    Worker->>Redis: Update BullMQ Progress (10%)
-    API-->>User: event: progress { percent: 10, stage: "Drafting Problem" }
-
-    Worker->>LangGraph: Run generate -> validate retry loop (max 3 attempts)
-    Worker->>Redis: Update BullMQ Progress (40%)
-    API-->>User: event: progress { percent: 40, stage: "Generating & Validating" }
-
-    LangGraph->>Sandbox: [DSA] Execute optimal & brute-force across all languages (Parallel)
-    Sandbox-->>LangGraph: Execution traces & outputs verified
-    Worker->>Redis: Update BullMQ Progress (75%)
-    API-->>User: event: progress { percent: 75, stage: "Sandbox Code Execution" }
-
-    Worker->>DB: Feature-hashed cosine similarity check (>= 0.88 = duplicate)
-    Worker->>DB: Persist Question with VALIDATED status
-    Worker->>Redis: Mark BullMQ job COMPLETED (100%)
-    API-->>User: event: completed { questionId, status: "VALIDATED" }
-```
-
----
-
-### 2. LangGraph Generate → Validate → Retry Pipeline
-
-Every question — DSA or OOPS — runs through the same two-node `StateGraph` in `packages/ai-orchestration/src/graphs/generateValidateGraph.ts`. What differs per question type is what "validate" means:
-
-```mermaid
-flowchart TD
-    Start([Generation Attempt for one difficulty/type slot]) --> GenNode["Generate Node:\nLLM drafts (or, on retry, revises) the question"]
-
-    GenNode --> DupCheck{"Feature-hash cosine\nsimilarity >= 0.88?"}
-    DupCheck -- "Duplicate" --> RetryCheck
-    DupCheck -- "Novel" --> TypeSplit{"Question Type?"}
-
-    TypeSplit -- "DSA" --> Sandbox["Validate Node (DSA):\nRun optimal + brute-force across all languages\nin the Piston sandbox, cross-check outputs"]
-    TypeSplit -- "OOPS / Conceptual" --> Debate["Validate Node (OOPS):\nCross-model Adversary critique + Judge verdict\n(agentDebateService.ts, different LLM than the generator)"]
-
-    Sandbox --> Passed{"Passed?"}
-    Debate --> Passed
-
-    Passed -- "No" --> RetryCheck{"Attempt < 3?"}
-    RetryCheck -- Yes --> FeedbackGen["Feed failure/critique back into\nGraph state as revision feedback"]
-    FeedbackGen --> GenNode
-
-    RetryCheck -- No --> FailState(["Question Status: FAILED\n(single row, no orphaned retries)"])
-    Passed -- "Yes" --> SuccessState(["Question Status: VALIDATED"])
-```
-
----
-
-### 3. High-Concurrency Sandboxed Code Execution
-
-Instead of sequential loops over languages and test cases, all execution payloads run concurrently with a semaphore ceiling (`p-limit`):
-
-```mermaid
-flowchart LR
-    subgraph Input ["Test Matrix"]
-        Q["Validated Question"]
-        Langs["Languages:\nPython, Java, C++, JS"]
-        Tests["20+ Edge & Performance\nTest Cases"]
-    end
-
-    subgraph ConcurrencyPool ["p-limit Semaphore (Cap: 10 Concurrency)"]
-        Slot1["Execution Slot 1"]
-        Slot2["Execution Slot 2"]
-        Slot3["..."]
-        Slot10["Execution Slot 10"]
-    end
-
-    subgraph SandboxNodes ["Piston Docker Sandboxes"]
-        P1["Container Node A\n(512MB / 0.75 CPU)"]
-        P2["Container Node B\n(512MB / 0.75 CPU)"]
-    end
-
-    subgraph Assertion ["Verification Engine"]
-        Match{"Optimal Output ==\nBrute Force Output?"}
-        Pass(["All Cases Pass"])
-        Fail(["Trigger Self-Correction"])
-    end
-
-    Input --> ConcurrencyPool
-    ConcurrencyPool --> SandboxNodes
-    SandboxNodes --> Assertion
-    Assertion -- True --> Pass
-    Assertion -- False --> Fail
-```
-
----
-
-### 4. Asynchronous Webhook Delivery Engine
-
-Decoupled outbound notifications ensure external LMS/ATS unavailability never impedes internal workflows:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant App as Internal Workflow (Review / Export)
-    participant Queue as BullMQ 'webhooks' Queue
-    participant Worker as Dedicated Webhook Worker
-    participant DB as Postgres (AuditLog)
-    actor External as ATS / LMS Endpoint
-
-    App->>Queue: enqueueWebhook(organizationId, payload)
-    Note over App,Queue: Non-blocking Fire-and-Forget (< 5ms)
-
-    Queue->>Worker: Dequeue delivery job
-    Worker->>Worker: Lookup Org webhookUrl & webhookSecret
-    Worker->>Worker: Compute HMAC-SHA256 Signature
-
-    Worker->>External: POST payload + X-QuestionForge-Signature (10s timeout)
-    
-    alt 2xx Success Response
-        External-->>Worker: 200 OK
-        Worker->>DB: Create AuditLog (WEBHOOK_TRIGGERED, status: success)
-    else 5xx / Network Error / Timeout
-        External-->>Worker: 500 Error / Timeout
-        Worker->>Queue: Trigger Exponential Backoff Retry (2s, 4s, 8s, 16s, 32s)
-        Note over Worker,Queue: Retries up to 5 attempts before terminal failure
-    end
-```
-
----
-
-### 5. Question Review & Lifecycle State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> DRAFT: Generated via API/Wizard
-    DRAFT --> VALIDATING: Submitted to Agentic Debate & Sandbox
-    VALIDATING --> VALIDATED: Consensus Reached + Tests Match
-    VALIDATING --> FAILED: Exceeded 3 Retries / Sandbox Failure
-    FAILED --> DRAFT: Regenerate with New Seed
-
-    VALIDATED --> IN_REVIEW: Human Review Requested
-    IN_REVIEW --> APPROVED: Reviewer Approves with Optional Edits
-    IN_REVIEW --> REJECTED: Reviewer Rejects with Feedback Note
-    REJECTED --> DRAFT: Cloned & Revised
-
-    APPROVED --> PAPER_ASSIGNED: Bundled into Assessment Paper
-    PAPER_ASSIGNED --> EXPORTED: Watermarked PDF or JSON Generated (S3)
-    APPROVED --> WEBHOOK_TRIGGERED: Dispatched via BullMQ to LMS/ATS
-```
-
----
-
-### 6. Zero-Downtime CI/CD Pipeline & Automated Rollback
-
-```mermaid
-flowchart TD
-    Push([Push to main Branch]) --> GHA[GitHub Actions Runner]
-    
-    subgraph Stage1 ["Stage 1: Turborepo Monorepo CI"]
-        GHA --> Install[Install Dependencies & Prisma Generate]
-        Install --> Services["Real Postgres 16 + Redis 7\nGitHub Actions service containers"]
-        Services --> Migrate1["prisma migrate deploy"]
-        Migrate1 --> Turbo["turbo run lint build test\n(Remote / Local Caching)"]
-        Turbo --> VitestResults["Vitest Suite: 48 Automated Tests Passed\n(across all 5 workspaces)"]
-    end
-
-    subgraph Stage2 ["Stage 2: Zero-Downtime Rolling Deployment"]
-        VitestResults --> SSH[SSH to Production Host]
-        SSH --> Pull[Pull Latest Git & Docker Images]
-        Pull --> Migrate["Execute 'prisma migrate deploy'\n(Prevents Schema Drift)"]
-        Migrate --> RollingAPI[Rolling Restart: Stateless API Containers]
-        Migrate --> RollingWorker[Rolling Restart: Dedicated Worker Containers]
-    end
-
-    subgraph Stage3 ["Stage 3: Automated Health & Readiness Probing"]
-        RollingAPI --> Probe["Probe GET /health/ready\n(Max 15 Attempts @ 2s Interval)"]
-        Probe -- "200 Healthy" --> DeploySuccess([Deployment Succeeded 🎉])
-        Probe -- "Failed after 15 checks" --> Rollback["Execute Rollback to Previous Commit\nRestore Prior API & Worker Containers"]
-        Rollback --> DeployFailed([Deployment Aborted & Alert Dispatched ❌])
-    end
-```
-
----
-
-## Database Schema & ERD
-
-```mermaid
-erDiagram
-    ORGANIZATION ||--o{ USER : "has"
-    ORGANIZATION ||--o{ QUESTION : "owns"
-    ORGANIZATION ||--o{ PAPER : "owns"
-    ORGANIZATION ||--o{ AUDIT_LOG : "records"
-
-    USER ||--o{ QUESTION_REVIEW : "creates"
-    USER ||--o{ AUDIT_LOG : "triggers"
-
-    QUESTION ||--o{ QUESTION_HISTORY : "tracks"
-    QUESTION ||--o{ QUESTION_REVIEW : "receives"
-    QUESTION ||--o{ PAPER_QUESTION : "included_in"
-
-    PAPER ||--o{ PAPER_QUESTION : "contains"
-    PAPER ||--o{ EXPORT_RECORD : "exports"
-
-    ORGANIZATION {
-        string id PK
-        string name
-        string slug UK
-        json llmApiKeysEncrypted
-        int maxQuestionsPerDay
-        string webhookUrl
-        string webhookSecret
-    }
-
-    USER {
-        string id PK
-        string email UK
-        string name
-        enum role "ADMIN | REVIEWER | GENERATOR"
-        string passwordHash
-        string organizationId FK
-    }
-
-    QUESTION {
-        string id PK
-        enum type "DSA | OOPS | SYSTEM_DESIGN | SQL | MCQ"
-        enum difficulty "EASY | MEDIUM | HARD"
-        string topic
-        string title
-        text statement
-        json optimalSolution
-        json bruteForceSolution
-        json testCases
-        enum status "DRAFT | VALIDATING | VALIDATED | IN_REVIEW | APPROVED | REJECTED | FAILED"
-        float_array embeddingVector "256-dim, app-compared"
-        string organizationId FK
-    }
-
-    QUESTION_HISTORY {
-        string id PK
-        string questionId FK
-        int version
-        json snapshot
-        string editedById
-    }
-
-    QUESTION_REVIEW {
-        string id PK
-        string questionId FK
-        string reviewerId FK
-        string decision "APPROVED | REJECTED"
-        text note
-    }
-
-    PAPER {
-        string id PK
-        string title
-        json config
-        string organizationId FK
-    }
-
-    EXPORT_RECORD {
-        string id PK
-        string paperId FK
-        enum format "JSON | PDF_CANDIDATE | PDF_INTERNAL"
-        string signedToken UK
-        datetime expiresAt
-    }
-
-    AUDIT_LOG {
-        string id PK
-        string organizationId FK
-        string userId FK
-        enum action "QUESTION_GENERATED | USER_LOGIN | USER_LOGOUT | WEBHOOK_TRIGGERED | ..."
-        json metadata
-        string ipAddress
-    }
-```
-
----
-
-## Quantitative Scalability Specifications & Benchmarks
-
-Question Forge is architected for **Tier 3 Enterprise Scalability** (High-Concurrency Technical Assessment Engine):
-
-| Metric | Target Specification | Production Benchmark / Capacity |
-|---|---|---|
-| **Question Generation Volume** | 50,000 to 250,000 questions / day | Sustained via BullMQ distributed workers with configurable concurrency (5–15 per container). |
-| **Stateless API Ingestion** | 3,000+ HTTP requests / sec | Sustained across 4 stateless Node.js replicas behind AWS ALB without Event Loop lag. |
-| **Sandbox Execution Latency** | Sub-1.5s parallel execution | 10 concurrent `p-limit` execution slots per worker against Piston Docker containers. |
-| **Deduplication Latency** | Sub-15ms cosine similarity per candidate | In-application dot product against an org's most recent 300 embeddings — deliberately bounded, not a full-table scan; migrating to a native `pgvector` ANN index (ivfflat/HNSW) is the natural next step past that scale (see [Roadmap](#roadmap--future-extensions)). |
-| **Webhook Delivery Throughput** | 500+ dispatches / sec | Decoupled BullMQ worker queue with 10 concurrent HTTP sockets and HMAC signing. |
-| **Analytics Query Latency** | Sub-5ms response time | Two-tier Redis caching with 60s/120s TTL and instantaneous write-through invalidation. |
-| **Crash Recovery (RTO / RPO)** | Sub-5s job resumption | Redis AOF persistence and BullMQ stalled job locks ensure zero job loss on node crashes. |
-
-### Architectural Decoupling: API vs. Worker Scaling
-
-```mermaid
-flowchart LR
-    Traffic[Client HTTP Traffic] --> ALB[AWS ALB / Nginx]
-    ALB --> API[Stateless API Cluster\napps/api:4000\nAutoscales on CPU / Latency]
-    API --> Redis[(Redis BullMQ Queues)]
-    Redis --> Worker[Dedicated Worker Cluster\napps/api/src/worker.ts\nAutoscales on Queue Depth]
-    Worker --> Piston[Piston Sandbox Cluster]
-    Worker --> LLM[LLM Provider APIs]
-    Worker --> PG[(Postgres 16 + pgvector)]
-```
-
-- **Stateless API Scaling:** Autoscaled on ALB target response time and container CPU utilization (>70%).
-- **Dedicated Worker Scaling:** Autoscaled on BullMQ queue depth (`waiting` + `delayed` jobs) via AWS CloudWatch / KEDA metrics.
-
----
-
-## Scalability & Reliability Matrix
-
-| Architecture Dimension | Legacy Approach | Question Forge Enterprise Architecture |
-|---|---|---|
-| **Process Model** | Monolithic single process | **Decoupled API & Worker**: Stateless HTTP containers + dedicated BullMQ workers |
-| **Job Durability** | Fire-and-forget in-memory Node tasks | **BullMQ + Redis 7**: Crash-resilient queues with automated restart recovery |
-| **Sandbox Execution** | Nested sequential loops (`O(L × T)`) | **Parallel `Promise.all` with `p-limit`**: 10 simultaneous execution slots |
-| **Client Progress** | DB polling with inconsistent intervals | **Server-Sent Events (SSE)**: Real-time unidirectional event stream |
-| **Rate Limiting** | In-process memory (bypassed on multi-node) | **Redis-backed Store**: Globally synchronized quotas across all replicas |
-| **Webhook Delivery** | Inline blocking HTTP call inside requests | **Dedicated BullMQ Queue**: 5 retries with exponential backoff & HMAC signing |
-| **Analytics Latency** | 6+ heavy SQL aggregation queries on load | **Redis Caching**: Cached metrics with 60s/120s TTL and fast invalidation |
-| **Export Artifacts** | Local memory buffer (breaks multi-replica) | **AWS S3 + Presigned URLs**: Fails hard if unconfigured; zero container memory leak |
-| **Database Indexing** | Full table scans on status/topic queries | **Composite Indexes**: `[organizationId, status]`, `[organizationId, type, difficulty]` |
-| **LLM Client Overhead** | Instantiated per-request (socket churn) | **Module Singletons**: Long-lived HTTP keep-alive connections to providers |
-| **Graceful Shutdown** | Abrupt process termination (`SIGKILL`) | **Signal Draining**: `SIGTERM` handler closes HTTP & drains BullMQ workers |
-| **CI/CD Deployment** | Direct Docker reboot (schema mismatch) | **Automated Migrations + Health Check**: Zero-downtime rollback on failure |
-
----
-
-## Enterprise Security Architecture
-
-- **Stateless JWT with Instant Redis Revocation:**
-  Every issued JWT includes a unique UUID `jti` claim. Upon calling `POST /api/auth/logout`, the token's JTI is written to Redis with a TTL matching the token's expiration, immediately revoking it across all nodes.
-- **Tenant Isolation Enforcement:**
-  Every SQL query and administrative route strictly requires `req.user.organizationId`. Cross-tenant mutations (e.g., modifying users or questions across org boundaries) are blocked at the middleware and service layers.
-- **Mass Assignment Defenses:**
-  Question editing endpoints validate inputs against a strict Zod `patchSchema`. Sensitive properties (`organizationId`, `status`, `validationResult`, `embeddingVector`) cannot be mutated through update payloads.
-- **PDF Sanitization & Anti-XSS:**
-  All user-supplied statements, options, explanations, and code snippets are passed through an HTML entity escaping pipeline before being rendered by Puppeteer.
-- **HMAC-SHA256 Webhook Verification:**
-  All outbound payloads sent to third-party LMS/ATS systems include `X-QuestionForge-Signature: sha256=<hmac>`, enabling receiving servers to cryptographically verify payload integrity.
-
----
-
-## REST API Reference
-
-### Authentication & Sessions
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `POST` | `/api/auth/register` | Register new organization user | Public |
-| `POST` | `/api/auth/login` | Authenticate & obtain JWT with JTI | Public |
-| `POST` | `/api/auth/logout` | Revoke token via Redis JTI blacklist | Bearer |
-| `GET` | `/api/auth/me` | Fetch authenticated user profile | Bearer |
-
-### AI Generation & Queue
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `POST` | `/api/generate` | Enqueue question generation job | Bearer |
-| `GET` | `/api/generate/status/:jobId` | Poll BullMQ job status and progress | Bearer |
-| `GET` | `/api/generate/status/:jobId/stream` | Stream live SSE progress (`?token=` supported) | Bearer / Query |
-
-### Question Management
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `GET` | `/api/questions` | Filtered list with pagination & search | Bearer |
-| `GET` | `/api/questions/:id` | Fetch question detail & history snapshots | Bearer |
-| `PATCH` | `/api/questions/:id` | Update question (Zod mass-assignment protected) | Bearer |
-| `POST` | `/api/questions/:id/review` | Approve or reject question (triggers webhook) | Reviewer/Admin |
-
-### Assessment Papers & Exports
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `GET` | `/api/papers` | List organization assessment papers | Bearer |
-| `POST` | `/api/papers` | Create assessment paper bundle | Bearer |
-| `POST` | `/api/export/:paperId` | Export to S3 (JSON, Candidate PDF, Internal PDF) | Bearer |
-
-### Question Ingestion (LeetCode / GeeksforGeeks)
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `POST` | `/api/ingestion/fetch` | Fetch one problem by `{ platform, slug }`; `save: true` persists it as a `DRAFT` question | Admin |
-| `POST` | `/api/ingestion/fetch-category` | Fetch up to `limit` LeetCode problems tagged with a category | Admin |
-
-### Analytics & System Administration
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| `GET` | `/health` | Lightweight liveness probe for load balancers | Public |
-| `GET` | `/health/ready` | Deep readiness probe verifying Postgres and Redis health | Public |
-| `GET` | `/api/analytics` | Overview metrics (Redis cached 60s) | Bearer |
-| `GET` | `/api/analytics/export-stats` | Export metrics by format (Redis cached 120s) | Bearer |
-| `GET` | `/api/admin/queues/stats` | Real-time BullMQ telemetry for generation and webhooks | Admin |
-| `PATCH` | `/api/admin/users/:id/role` | Modify user role (organization-scoped) | Admin |
-| `GET` | `/api/webhooks` | Fetch current organization webhook configuration | Admin |
-| `POST` | `/api/webhooks/configure` | Configure webhook endpoint URL & generate HMAC secret | Admin |
-| `POST` | `/api/webhooks/test` | Enqueue test webhook to verify LMS connection | Admin |
-
----
-
-## Automated Testing Suite (Vitest)
-
-**48 tests across all 5 workspaces**, powered by **Vitest**, **Testing Library**, and **Supertest** — none require a live Postgres, Redis, or LLM provider:
+**Needs:** Node 20+, npm 10+, Docker, and at least one LLM API key.
 
 ```bash
-# Run every workspace's tests via Turborepo
-npm run test
+git clone https://github.com/yashsrivastava1408/QuestionForge.git
+cd QuestionForge
+cp .env.example .env
+```
 
-# Run one workspace directly
-npm run test --workspace=apps/api
+Edit `.env`:
 
-# Run Vitest in interactive watch mode for TDD
-npx vitest --workspace=apps/api
+```bash
+ANTHROPIC_API_KEY=...          # and/or OPENAI_API_KEY, GOOGLE_GEMINI_API_KEY
+JWT_SECRET=$(openssl rand -hex 32)
+ENCRYPTION_KEY=$(openssl rand -hex 32)
+```
+
+Start the infrastructure, set up the database, run:
+
+```bash
+docker compose up -d postgres redis piston
+npm install
+npm run db:generate
+npm run db:migrate:deploy
+npm run db:seed
+npm run dev
+```
+
+- App: http://localhost:5173
+- API: http://localhost:4000
+- Sign in with organization `demo`, `admin@demo.com` / `password123` (a reviewer account, `reviewer@demo.com`, has the same password). **Change these before exposing the app to anyone:** sidebar → *Change Password* for your own, Admin → *Team Members* to reset or deactivate others.
+
+Piston starts with no languages installed. Install the runtimes once (see the [Piston CLI](https://github.com/engineer-man/piston#cli)): `python`, `java`, `gcc`, `node`, `sqlite3`.
+
+### Without Piston
+
+To try the pipeline without setting up Piston, add `SANDBOX_DRIVER=local` to `.env`. Generated code then runs as ordinary processes on your machine using your installed `python3`, `node`, `g++`, `javac` and `sqlite3`.
+
+> ⚠️ **This runs LLM-written code with no isolation.** It is for local experiments only, and the app refuses to start with it when `NODE_ENV=production`.
+
+### Skipping the login screen in development
+
+Set `ALLOW_MOCK_AUTH=true` in `.env` **and** `VITE_ALLOW_MOCK_AUTH=true` for the frontend. This is off by default and ignored in production.
+
+### Existing database?
+
+If you already have a Question Forge database, read [Schema & Migrations → Applying them](./docs/database/schema-and-indexing.md#applying-them) before migrating. An earlier mismatch between the schema and its migrations is fixed by a new migration, and how you apply it depends on how your database was created.
+
+---
+
+## Configuration
+
+The full list, with comments, is in [`.env.example`](./.env.example). The ones that matter most:
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `DATABASE_URL` | Postgres connection string | — |
+| `REDIS_URL` | Redis for queues, rate limits, token revocation | `redis://localhost:6379` |
+| `JWT_SECRET` | Signs login tokens. Production requires 32+ random characters. | — |
+| `ENCRYPTION_KEY` | 64 hex chars. Encrypts webhook secrets and per-organization LLM keys. | — |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_GEMINI_API_KEY` | Server-wide LLM keys. Configure two providers to get an independent reviewer. | — |
+| `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `GEMINI_MODEL` | Model overrides | `claude-opus-5-5` / `gpt-4o` / `gemini-flash-lite-latest` |
+| `SANDBOX_DRIVER` | `piston` or `local` (unsafe, dev only) | `piston` |
+| `PISTON_API_URL` | Piston endpoint | `http://localhost:2000` |
+| `WORKER_CONCURRENCY` | Questions processed in parallel per worker | `5` |
+| `SANDBOX_CONCURRENCY` | Parallel sandbox executions per validation | `10` |
+| `VALIDATION_RANDOM_CASES` / `VALIDATION_EDGE_CASES` | Generated inputs per coding question | `12` / `4` |
+| `VALIDATION_ENFORCE_COMPLEXITY_GAP` | Fail medium/hard questions that brute force can solve | `true` |
+| `VALIDATION_BLIND_SOLVER` | Have a second model solve coding questions from the statement alone (one extra LLM call each) | `true` |
+| `ANTHROPIC_REVIEW_MODEL` / `OPENAI_REVIEW_MODEL` / `GEMINI_REVIEW_MODEL` | A cheaper model for the short review calls | same as drafting |
+| `ENABLE_EMBEDDED_WORKERS` | Run workers inside the API process | on in dev, off in prod |
+| `EXPORT_STORAGE` / `EXPORT_LOCAL_DIR` | `local` to store exports on disk instead of S3 | S3 if configured |
+| `S3_BUCKET_NAME`, `AWS_*` | S3 export storage | — |
+| `LLM_PRICE_INPUT_PER_MTOK` / `LLM_PRICE_OUTPUT_PER_MTOK` | Your price per million tokens, for cost reporting on non-Claude models | — |
+| `MAINTENANCE_INTERVAL_MINUTES` / `STALE_ITEM_MINUTES` | Housekeeping sweep: recover stuck questions, delete expired exports | `5` / `15` |
+| `SUPERADMIN_EMAILS` | Emails allowed to create new organizations | none |
+| `ALLOW_MOCK_AUTH` | Dev-only login shortcut | `false` |
+| `WEBHOOK_ALLOW_PRIVATE_TARGETS` | Dev-only: allow webhooks to localhost | `false` |
+
+With `NODE_ENV=production`, the API and worker **refuse to start** with a weak `JWT_SECRET`, a missing or all-zero `ENCRYPTION_KEY`, `ALLOW_MOCK_AUTH=true`, or `SANDBOX_DRIVER=local`.
+
+---
+
+## API reference
+
+All endpoints except login, health and export download need `Authorization: Bearer <token>`. Everything is scoped to the caller's organization.
+
+### Auth
+| Method | Endpoint | Description | Who |
+|---|---|---|---|
+| `POST` | `/api/auth/login` | `{ email, password, organizationSlug }` → JWT | Public |
+| `POST` | `/api/auth/register` | Create a user in **your own** organization | Admin |
+| `POST` | `/api/auth/logout` | Revoke the current token | Any |
+| `POST` | `/api/auth/change-password` | `{ currentPassword, newPassword }` — signs out your other sessions, returns a fresh token | Any |
+| `GET` | `/api/auth/me` | Current user | Any |
+
+There is no public sign-up. The first admin comes from `npm run db:seed`.
+
+### Generation
+| Method | Endpoint | Description | Who |
+|---|---|---|---|
+| `POST` | `/api/generate` | Start a batch. Returns `202 { jobId }`. | Admin, Generator |
+| `GET` | `/api/generate/status/:jobId` | Per-question status, measured token usage and cost | Any |
+| `GET` | `/api/generate/status/:jobId/stream` | The same, as Server-Sent Events | Any |
+| `GET` | `/api/generate/jobs` | Recent batches with validated / failed counts | Any |
+| `POST` | `/api/generate/jobs/:jobId/cancel` | Stop a running batch; validated questions are kept | Admin, Generator |
+| `POST` | `/api/generate/jobs/:jobId/retry-failed` | Re-run only the failed questions of a finished batch | Admin, Generator |
+
+<details>
+<summary>Example request and status</summary>
+
+```jsonc
+// POST /api/generate
+{
+  "roleLevel": "sde1",                       // intern | sde1 | sde2 | senior | lead
+  "topics": ["Arrays", "Graphs"],
+  "difficultyDistribution": { "easy": 30, "medium": 50, "hard": 20 },   // must sum to 100
+  "totalQuestions": 10,
+  "questionTypes": ["DSA", "SQL", "MCQ"],    // DSA | SQL | MCQ | OOPS | CONCEPTUAL | SYSTEM_DESIGN
+  "languages": ["python", "java"],           // python | java | cpp | javascript (DSA only)
+  "llmProvider": "anthropic",                // anthropic | openai | gemini
+  "companyStyle": "Google-style",            // optional
+  "mcqOptionsCount": 4,                      // optional
+  "paperId": "…"                             // optional: attach validated questions to this paper
+}
+```
+
+```jsonc
+// GET /api/generate/status/:jobId
+{
+  "jobId": "…", "kind": "GENERATE", "state": "active", "progress": 40, "done": false, "total": 10,
+  "counts": { "queued": 2, "running": 4, "validated": 3, "failed": 1 },
+  "items": [
+    { "index": 0, "type": "DSA", "difficulty": "MEDIUM", "topic": "Arrays",
+      "status": "VALIDATING", "stage": "Sandbox: differential testing across 2 language(s)",
+      "attempts": 1, "failureReason": null, "questionId": "…", "title": "…" }
+  ],
+  "usage": { "inputTokens": 48211, "outputTokens": 30954, "costUsd": 0.8119 }
+}
+```
+</details>
+
+### Questions
+| Method | Endpoint | Description | Who |
+|---|---|---|---|
+| `GET` | `/api/questions` | List; filter by `status`, `type`, `difficulty`, `topic`; `page`, `limit` | Any |
+| `GET` | `/api/questions/:id` | Full question with history and reviews | Any |
+| `PATCH` | `/api/questions/:id` | Edit. A content change triggers re-validation and returns `revalidationJobId`. | Admin, Reviewer |
+| `POST` | `/api/questions/:id/revalidate` | Run validation again | Admin, Reviewer |
+| `POST` | `/api/questions/:id/complete` | For an imported draft: generate and validate solutions and tests | Admin, Generator |
+| `POST` | `/api/questions/:id/review` | `{ decision: "APPROVED" \| "REJECTED", note? }` — only for `VALIDATED` questions | Admin, Reviewer |
+| `POST` | `/api/questions/review-bulk` | `{ ids, decision, note? }` — up to 100 at once; returns `{ updated, skipped }` | Admin, Reviewer |
+
+### Papers and export
+| Method | Endpoint | Description | Who |
+|---|---|---|---|
+| `GET` | `/api/papers` · `/api/papers/:id` | List / read papers | Any |
+| `POST` | `/api/papers` | `{ title, questionIds }` | Admin, Generator |
+| `GET` | `/api/papers/availability` | Approved question counts per type and difficulty | Any |
+| `POST` | `/api/papers/assemble` | `{ title, blueprint: [{ type?, difficulty?, topic?, count }] }` — random draw from approved questions | Admin, Generator |
+| `PATCH` | `/api/papers/:id` | `{ title?, questionIds? }` — rename, reorder, add or remove | Admin, Generator |
+| `POST` | `/api/export` | `{ paperId, format: "JSON" \| "PDF_CANDIDATE" \| "PDF_INTERNAL" }` → short-lived `downloadUrl` | Admin, Reviewer |
+| `GET` | `/api/export/download/:token` | Download a locally stored export. The token is the credential. | Link holder |
+
+### Import
+| Method | Endpoint | Description | Who |
+|---|---|---|---|
+| `POST` | `/api/ingestion/fetch` | `{ platform: "leetcode" \| "gfg", slug, save? }` — preview, or save as a `DRAFT` | Admin |
+| `POST` | `/api/ingestion/fetch-category` | Up to `limit` LeetCode problems for a tag | Admin |
+
+### Admin
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/admin/users` | Users in the organization |
+| `PATCH` | `/api/admin/users/:id/role` | Change a user's role |
+| `PATCH` | `/api/admin/users/:id/status` | `{ isActive }` — deactivate or reactivate |
+| `POST` | `/api/admin/users/:id/reset-password` | `{ newPassword }` — set a new password and sign the user out |
+| `POST` | `/api/admin/organizations` | Create an organization (emails in `SUPERADMIN_EMAILS` only) |
+| `GET` | `/api/admin/audit-logs` | Audit trail |
+| `GET` · `PUT` | `/api/admin/llm-keys` | See which providers have a key; set or remove the organization's own key (write-only) |
+| `GET` | `/api/admin/queues/stats` | Queue counts |
+| `POST` | `/api/admin/queues/ticket` | One-time link to the Bull Board dashboard |
+| `GET` · `POST` | `/api/webhooks` · `/api/webhooks/configure` · `/api/webhooks/test` | Webhook configuration |
+
+### Other
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/analytics/overview` · `/api/analytics/validation-rate` | Question-bank metrics |
+| `GET` | `/api/analytics/generation?days=30` | Pass rate and attempts per type, measured spend, cost per validated question, failure reasons, human approval rate |
+| `GET` | `/health` · `/health/ready` | Liveness; readiness (Postgres + Redis) |
+
+---
+
+## Testing
+
+```bash
+npm test              # 172 unit tests; no database, Redis, Docker or LLM key needed
+npm run test:e2e      # 49 end-to-end tests; needs a disposable Postgres and Redis
 ```
 
 | Workspace | Tests | Covers |
-|---|---|---|
-| `packages/ai-orchestration` | 4 | The real LangGraph retry state machine — first-attempt pass, feedback-driven retry, exhausting `maxAttempts`, both named wrappers sharing one engine |
-| `packages/sandbox` | 4 | Piston client: stdout/exitCode mapping, `SIGKILL` → `timedOut`, network-failure fallback, the 3s `run_timeout` cap |
-| `packages/ingestion` | 8 | LeetCode GraphQL parsing + by-category batching, GFG/Cheerio HTML parsing, graceful `null` on 404/network errors |
-| `apps/api` | 26 | Health probes, Zod auth schemas, feature-hash cosine similarity math, edge-case injection, `buildDifficultyPlan`/`buildQuestionData`, and the ingestion controller (preview vs. save, 404 on a missing source, invalid-platform rejection) |
-| `apps/frontend` | 6 | Login form (render, autofill, submit, error state) and the Admin "Import Questions" tab (preview → save flow, error state) |
+|---|---:|---|
+| `apps/api` | 120 | Validation engine and independent solver (real code execution), review logic, draft schemas, failure classification, crypto, SSRF guard, config checks |
+| `packages/sandbox` | 13 | Piston client (mocked HTTP), local runner (real processes) |
+| `packages/ai-orchestration` | 4 | The LangGraph retry state machine |
+| `packages/ingestion` | 8 | LeetCode / GeeksforGeeks adapters |
+| `apps/frontend` | 27 | Live job progress, SSE client, question detail and editing, paper builder and export, bulk review, change password, user actions, job history, analytics |
+
+The end-to-end suite **truncates the database it is given**. Setup, and the full list of what each suite proves and does not prove, is in [docs/operations/testing.md](./docs/operations/testing.md).
 
 ---
 
-## Environment Variables
+## Production
 
-| Variable | Description | Example / Default |
-|---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string (`?connection_limit=5` for replicas) | `postgresql://user:pass@localhost:5432/qforge` |
-| `REDIS_URL` | Redis instance for BullMQ queues, rate limiting, and cache | `redis://localhost:6379` |
-| `JWT_SECRET` | Secret key for signing JSON Web Tokens | `your-cryptographically-secure-secret` |
-| `ENCRYPTION_KEY` | Reserved for per-org BYOK key encryption (`Organization.llmApiKeysEncrypted`) — schema-ready, not yet wired into `llmService.ts`; see [security whitepaper](./docs/security/security-whitepaper.md#5-bring-your-own-key-byok-schema-ready-not-yet-implemented) | `a1b2c3d4e5...` |
-| `ENABLE_EMBEDDED_WORKERS` | Controls whether HTTP server spawns embedded workers (`true` for local dev, `false` for prod) | `true` (dev) / `false` (prod) |
-| `OPENAI_API_KEY` | Optional: OpenAI API Key for GPT-4o | `sk-...` |
-| `ANTHROPIC_API_KEY` | Optional: Anthropic API Key for Claude 3.5 Sonnet | `sk-ant-...` |
-| `GOOGLE_GEMINI_API_KEY` | Optional: Google Gemini API Key | `AIzaSy...` |
-| `PISTON_API_URL` | URL of the Piston code execution sandbox | `http://localhost:2000` |
-| `CORS_ORIGINS` | Comma-separated allowlist of origins | `http://localhost:5173,https://app.qforge.io` |
-| `WORKER_CONCURRENCY` | Concurrent generation jobs processed per worker | `5` |
-| `SANDBOX_CONCURRENCY` | Max simultaneous test executions against Piston | `10` |
-| `S3_BUCKET_NAME` | AWS S3 bucket for watermarked PDF and JSON exports | `qforge-exports-prod` |
-| `AWS_ACCESS_KEY_ID` | IAM credentials for AWS S3 export storage | `AKIAIOSFODNN7EXAMPLE` |
-| `AWS_SECRET_ACCESS_KEY`| IAM secret key for AWS S3 export storage | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
-| `AWS_REGION` | AWS Region for S3 bucket | `us-east-1` |
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+Runs the API (2 replicas, no embedded workers), a separate worker, and the frontend behind nginx. Before you deploy, read the [Deployment & Runbook](./docs/operations/deployment-and-runbook.md) — in short:
+
+- Set a strong `JWT_SECRET` and `ENCRYPTION_KEY`, or the processes will not start.
+- Apply migrations (`npm run db:migrate:deploy`) before starting new code. Back up first.
+- Configure S3 for exports (replicas do not share a disk).
+- Run Redis with `maxmemory-policy noeviction`.
+- Keep the Piston sandbox on a network that cannot reach your database.
+- Replace the seeded demo credentials.
+
+The sandbox, not the LLM, is usually what limits throughput: a 4-language coding question is roughly 300 executions. See [Capacity Planning](./docs/operations/scalability-and-benchmarks.md).
+
+Security controls and open items are listed in [Security Architecture](./docs/security/security-whitepaper.md).
 
 ---
 
-## Local Development & Seeding
+## Repository layout
 
-### 1. Prerequisites
-- Docker & Docker Compose
-- Node.js 20+ and npm 10+
+```text
+apps/
+  api/                        Express API + BullMQ workers
+    src/
+      index.ts                HTTP server          worker.ts   standalone worker process
+      routes/  controllers/   HTTP layer
+      middleware/             auth, rate limiting, error handling
+      queues/                 generation + webhook queues and workers
+      services/
+        generationService.ts  batches, items, the per-question job
+        validationService.ts  differential + SQL validation
+        reviewService.ts      blind solve, adversary, judge
+        maintenanceService.ts recover stuck items, delete expired exports
+        llmService.ts         provider clients, retries, usage metering
+        prompts.ts            one prompt per question type
+        questionDrafts.ts     Zod schemas for LLM drafts
+        deduplicationService.ts   pricing.ts   exportService.ts   s3Service.ts
+      utils/                  crypto, urlSafety (SSRF), config checks, json
+      __tests__/              unit tests, e2e/ suite, fixtures/
+  frontend/                   React 18 + Vite SPA
+    src/pages/                Generate, Questions, Review, Papers, Analytics, Admin
+    src/components/           JobProgress, JobHistory, QuestionDetail, GenerationInsights,
+                              ChangePassword, UserActions, LlmKeysPanel, AddUserForm, Layout
+    src/lib/jobStream.ts      SSE client (fetch-based)
 
-### 2. Environment Setup
-```bash
-git clone https://github.com/your-org/question-forge.git
-cd question-forge
-cp .env.example .env
+packages/
+  shared/                     Prisma schema + migrations, shared TypeScript types
+  ai-orchestration/           LangGraph generate → validate → retry state machine
+  sandbox/                    executeSandbox: Piston client + local dev runner
+  ingestion/                  LeetCode / GeeksforGeeks adapters
+
+docs/                         Architecture, database, security, operations
+infra/terraform/              AWS infrastructure (not exercised by tests)
+docker-compose.yml            Local stack: Postgres, Redis, Piston, API, frontend
+docker-compose.prod.yml       Production overrides: API replicas + separate worker
 ```
-*Configure your chosen LLM keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_GEMINI_API_KEY`) in `.env`.*
 
-### 3. Launch Infrastructure Containers
-```bash
-# Starts PostgreSQL (5432), Redis (6379), and Piston Sandbox (2000)
-docker compose up -d postgres redis piston
-```
-
-### 4. Install Dependencies & Migrate Database
-```bash
-npm install
-npm run db:generate
-npm run db:migrate
-```
-
-### 5. Seed Demo Organization & Users
-```bash
-npm run db:seed
-```
-*Default Credentials Created:*
-- **Admin**: `admin@demo.com` / `password123` (Org Slug: `demo`)
-- **Reviewer**: `reviewer@demo.com` / `password123` (Org Slug: `demo`)
-
-### 6. Run Automated Tests
-```bash
-npm run test
-```
-
-### 7. Start Development Servers
-```bash
-# Starts both the Express API and Vite React frontend concurrently
-npm run dev
-```
-- Frontend UI: `http://localhost:5173`
-- Backend API: `http://localhost:4000`
-
-*(Optional) To test dedicated worker separation locally:*
-```bash
-# Terminal 1: Run HTTP API only
-ENABLE_EMBEDDED_WORKERS=false npm run dev --workspace=apps/api
-
-# Terminal 2: Run standalone worker process
-npm run dev:worker
-```
+**Stack:** TypeScript · Node 20 · Express · Prisma + PostgreSQL 16 · Redis 7 + BullMQ · LangGraph · Anthropic / OpenAI / Gemini SDKs · Piston · Puppeteer · React 18 + Vite · Vitest · Turborepo
 
 ---
 
-## Production Deployment (AWS / Terraform / Docker)
+## Documentation
 
-Question Forge is designed according to **12-Factor App principles** for horizontal scalability across cloud environments.
-
-1. **Database:** Deploy AWS RDS PostgreSQL (version 16) with the `pgvector` extension enabled.
-2. **Cache & Queue:** Provision an AWS ElastiCache for Redis cluster.
-3. **Piston Sandbox:** Apply the included Terraform scripts under `infra/terraform/` to spin up auto-scaling EC2 instances running Piston Docker containers behind an internal Application Load Balancer.
-4. **Storage:** Create an AWS S3 bucket with strict private access and configure presigned URL timeouts.
-5. **Decoupled Containers:** Deploy stateless API replicas and independent BullMQ worker services via `docker-compose.prod.yml`:
-   ```bash
-   docker compose -f docker-compose.prod.yml up -d
-   ```
-6. **Automated CI/CD:** Push to `main` to trigger the automated GitHub Actions workflow (`.github/workflows/deploy-backend.yml`), which executes Turborepo tests, database migrations, rolling container restarts, and automated health checks with instant rollback.
-
-### Sizing and Concurrency Recommendations
-
-| Deployment Profile | Worker Concurrency | Sandbox Concurrency | Recommended API Replicas | Dedicated Worker Containers |
-|---|---|---|---|---|
-| **Development** | 2 | 5 | 1 (embedded worker) | 0 |
-| **Staging / Small Team** | 5 | 10 | 2 | 1 |
-| **Enterprise Production** | 10–15 | 25 | 4+ | 2–4 (autoscaled) |
-| **High-Throughput Batch** | 25+ | 50+ | 6+ behind ALB | 5–10 (autoscaled) |
+| | |
+|---|---|
+| [System Overview](./docs/architecture/system-overview.md) | Processes, stores and request flow |
+| [Generate → Validate → Retry Engine](./docs/architecture/multi-agent-debate.md) | The loop and what each question type's validation proves |
+| [Sandboxed Execution & Differential Validation](./docs/architecture/sandboxed-execution.md) | The five-step differential test; SQL validation |
+| [Queue & Worker Engine](./docs/architecture/queue-and-worker-engine.md) | One job per question, status, retries, quotas |
+| [Question Ingestion](./docs/architecture/ingestion-pipeline.md) | Importing and completing drafts |
+| [Schema & Migrations](./docs/database/schema-and-indexing.md) | Models, indexes, applying migrations |
+| [Duplicate Detection](./docs/database/vector-deduplication.md) | The lexical similarity check and its limits |
+| [Security Architecture](./docs/security/security-whitepaper.md) | Controls and open items |
+| [Deployment & Runbook](./docs/operations/deployment-and-runbook.md) | Required config, health probes, incident playbooks |
+| [Testing](./docs/operations/testing.md) | What is tested and what is not |
+| [Capacity Planning](./docs/operations/scalability-and-benchmarks.md) | A planning model; no measured benchmarks |
 
 ---
 
-## Roadmap & Future Extensions
+## Not built yet
 
-- **Native `pgvector` ANN Search:** Migrate `Question.embeddingVector` from a plain `Float[]` compared in application code to a real `vector` column with an ivfflat/HNSW index, so deduplication scales past a few hundred questions per organization without widening the in-app scan window.
-- **SSO SAML 2.0 & OIDC:** Native enterprise Okta, Google Workspace, and Microsoft Azure AD single sign-on integration.
-- **Additional Language Runtimes:** Out-of-the-box support for Go, Rust, C#, and Ruby sandboxes (Piston already supports them; the ingestion/generation prompts currently target Python/Java/C++/JavaScript).
-- **Custom Agent Fine-Tuning:** LoRA adapters for fine-tuning the generation and adversary prompts on customer-specific historical question banks.
-
----
-
-## Contributing & Community
-
-We welcome contributions! Please review our community guidelines:
-- [**Contributing Guide** (`CONTRIBUTING.md`)](./CONTRIBUTING.md): Monorepo setup, branching rules, and PR guidelines.
-- [**Code of Conduct** (`CODE_OF_CONDUCT.md`)](./CODE_OF_CONDUCT.md): Contributor Covenant v2.1 standards.
-- [**Security Policy** (`SECURITY.md`)](./SECURITY.md): Responsible disclosure instructions and response SLAs.
+- **Semantic duplicate detection.** Today's check is lexical: it catches reworded copies, not the same problem told as a different story. Real embeddings with a `pgvector` index are the next step.
+- **Single sign-on** (SAML / OIDC), and a self-service "forgot password" email flow — today an admin resets a locked-out user's password.
+- **Reviewer assignment.** Any reviewer can act on any question; there is no per-reviewer queue.
+- **Shuffled paper variants** (per-candidate question or option order).
+- **More languages.** Piston supports Go, Rust, C# and others; the prompts and UI cover Python, Java, C++ and JavaScript.
+- **A candidate-facing test runner.** Question Forge produces and exports assessments; it does not deliver them to candidates.
+- **Provider-native structured output.** Drafts are requested as JSON and checked with Zod, with a retry on a bad shape, rather than enforced by each provider's schema feature.
+- **Load testing and published performance numbers.**
 
 ---
+
+## Contributing
+
+- [Contributing Guide](./CONTRIBUTING.md) — setup, branching, pull requests
+- [Code of Conduct](./CODE_OF_CONDUCT.md)
+- [Security Policy](./SECURITY.md) — reporting vulnerabilities
+
+Please run `npm run lint`, `npm run typecheck` and `npm test` before opening a pull request, and update the relevant page under `docs/` when you change behaviour.
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+MIT.

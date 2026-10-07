@@ -1,149 +1,125 @@
-# Enterprise Security Architecture Whitepaper
+# Security Architecture
 
-This whitepaper details the defensive mechanisms, cryptographic controls, and identity management policies governing Question Forge.
-
----
-
-## 1. Zero-Trust Multi-Tenancy Model
-
-Question Forge implements **logical multi-tenancy** enforced at the middleware, controller, and query layers.
-
-```mermaid
-flowchart TD
-    Client["Client Request + Bearer JWT"] --> AuthMid["JWT Auth Middleware"]
-    
-    AuthMid --> Extract["Extract Claim:\nuser.id, user.organizationId, user.role"]
-    Extract --> Scope["Inject Scope into Express Context:\nreq.user = { id, organizationId, role }"]
-    
-    Scope --> Controller["Layered Controller\n(e.g., questionsController)"]
-    Controller --> Prisma["Prisma Query Engine"]
-    
-    Prisma --> DB[("PostgreSQL\nWHERE organizationId = req.user.organizationId")]
-```
-
-### Multi-Tenancy Invariants
-1. **Query-Level Tenant Scoping**: Every database lookup, insertion, update, or deletion strictly includes `where: { organizationId: req.user.organizationId }`.
-2. **Anti-IDOR Protection**: Insecure Direct Object References (e.g., supplying an external `paperId` or `questionId`) fail with `404 Not Found` because the query filters by both resource ID and tenant ID simultaneously.
+What protects a Question Forge deployment, where each control lives in the code, and what is still open. Every control listed here is exercised by a test (see [testing.md](../operations/testing.md)).
 
 ---
 
-## 2. Authentication & Instant Redis Token Revocation
+## 1. Tenancy
 
-Traditional stateless JWTs suffer from a well-known vulnerability: once issued, they cannot be revoked prior to expiration without maintaining a database state.
+Every row that matters carries an `organizationId`, and every query filters on the `organizationId` inside the caller's verified JWT — never on anything the client sends.
 
-Question Forge resolves this via **Stateless JWTs with an Instant Redis JTI Blacklist**:
+- Reading or changing a question, paper, export, webhook config, LLM key or generation job from another organization returns **404**.
+- A `paperId` or question id from another organization is rejected, not silently accepted.
+- Generation status and its SSE stream are looked up by `(jobId, organizationId)`.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Client
-    participant API as Express API
-    participant Redis as Redis JTI Store
-    participant DB as Postgres
+## 2. Authentication
 
-    Note over User,API: 1. Authentication
-    User->>API: POST /api/auth/login (email, password)
-    API->>DB: Verify bcrypt password hash
-    API->>API: Generate JWT containing unique 'jti' UUID claim
-    API-->>User: 200 OK { token, user }
+| Control | Detail |
+|---|---|
+| Login | `POST /api/auth/login` — bcrypt check, returns a 24 h JWT carrying `userId`, `role`, `organizationId` and a unique `jti`. |
+| Same error for every failure | Wrong password, unknown user and unknown organization all return `401 Invalid credentials`, so the endpoint cannot be used to discover tenants. |
+| Logout | The `jti` is written to Redis with a TTL equal to the token's remaining life; `authenticate` rejects revoked tokens. |
+| Change password | `POST /api/auth/change-password` needs the current password. Every other session of that user is signed out; the caller gets a fresh token. |
+| Admin password reset | `POST /api/admin/users/:id/reset-password` sets a new password and signs the user out everywhere. |
+| Deactivate a user | `PATCH /api/admin/users/:id/status`. Takes effect **immediately** — the user's existing tokens stop working, they cannot log in, and the login error is the same as for a wrong password. Reversible. |
+| Role changes | The role lives inside the JWT, so changing a role retires that user's existing tokens; the new role applies from their next login. |
+| Last admin | An organization's only active admin cannot be demoted or deactivated, and no admin can deactivate themselves. |
+| **No public sign-up** | `POST /api/auth/register` requires an authenticated **ADMIN** and always creates the user in the admin's own organization. The first admin comes from `npm run db:seed`. |
+| Scoped tokens | A JWT with a `scope` claim (the Bull Board session) is refused by the API. |
 
-    Note over User,API: 2. Authenticated Request
-    User->>API: GET /api/questions (Authorization: Bearer <token>)
-    API->>Redis: GET "blacklist:<jti>"
-    Redis-->>API: null (Not revoked)
-    API-->>User: 200 OK [questions]
+**How "sign out everywhere" works.** A per-user marker in Redis (`user:tokens-valid-after:<id>`) holds a timestamp. `authenticate` reads it in the same round-trip as the logout check and rejects any token issued before it. The marker lives a little longer than a token's 24-hour life, after which every older token has expired anyway.
 
-    Note over User,API: 3. Instant Logout / Revocation
-    User->>API: POST /api/auth/logout
-    API->>API: Calculate remaining TTL: (token.exp - now())
-    API->>Redis: SETEX "blacklist:<jti>" <TTL> "1"
-    API-->>User: 200 OK { message: "Session revoked" }
+> **Fixed:** registration used to be an open endpoint that accepted any organization slug and `role: "ADMIN"`, which let anyone make themselves an administrator of any tenant.
 
-    Note over User,API: 4. Subsequent Replay Attempt
-    User->>API: GET /api/questions (Same revoked token)
-    API->>Redis: GET "blacklist:<jti>"
-    Redis-->>API: "1" (Blacklisted!)
-    API-->>User: 401 Unauthorized { error: "Token has been revoked" }
-```
+### Development login shortcut
 
----
+`Authorization: Bearer mock-token` acts as the seeded admin **only** when `ALLOW_MOCK_AUTH=true` and `NODE_ENV` is not `production`. It is off by default. (It used to be on whenever `NODE_ENV` was anything other than `production`, including unset.) The frontend needs `VITE_ALLOW_MOCK_AUTH=true` to use it.
 
-## 3. Role-Based Access Control (RBAC) Matrix
+## 3. Roles
 
-Users belong to an organization under one of three granular roles:
-
-| Action / Resource | GENERATOR | REVIEWER | ADMIN |
+| Action | ADMIN | REVIEWER | GENERATOR |
 |---|:---:|:---:|:---:|
-| **Generate Question via AI** | ✅ | ✅ | ✅ |
-| **View Organization Questions** | ✅ | ✅ | ✅ |
-| **Edit Draft Question** | ✅ (Author only) | ✅ | ✅ |
-| **Approve / Reject Question** | ❌ | ✅ | ✅ |
-| **Bundle Assessment Papers** | ❌ | ✅ | ✅ |
-| **Export to S3 (Candidate / Internal PDF)**| ❌ | ✅ | ✅ |
-| **Configure Org Webhooks & Secrets** | ❌ | ❌ | ✅ |
-| **Manage Users & Role Assignment** | ❌ | ❌ | ✅ |
-| **View Queue & System Telemetry** | ❌ | ❌ | ✅ |
+| Start generation, complete an imported draft | ✅ | — | ✅ |
+| Edit, re-validate, approve / reject questions | ✅ | ✅ | — |
+| Export papers | ✅ | ✅ | — |
+| Users (add, role, deactivate, reset password), audit log, webhooks, LLM keys, queue dashboard, imports | ✅ | — | — |
+| Change own password | ✅ | ✅ | ✅ |
+| List / read questions and papers, job status | ✅ | ✅ | ✅ |
 
----
+## 4. Refusing to start insecure (`utils/config.ts`)
 
-## 4. Input Sanitization & Anti-XSS Architecture
+`assertSecureConfig()` runs at boot in both the API and the worker. With `NODE_ENV=production` the process **exits** unless:
 
-Because generated questions often contain HTML-sensitive characters (`<`, `>`, `&`, quotes in code snippets and explanations), unescaped rendering in headless browsers (Puppeteer) or web frontends presents severe Cross-Site Scripting (XSS) and Server-Side Request Forgery (SSRF) attack vectors.
+- `JWT_SECRET` is at least 32 characters and not one of the example values;
+- `ENCRYPTION_KEY` is 64 hex characters and not all zeros;
+- `ALLOW_MOCK_AUTH` is not `true`;
+- `SANDBOX_DRIVER` is not `local`.
 
-### HTML Entity Sanitization Pipeline
+### Creating organizations
 
-```mermaid
-flowchart LR
-    Input["User/LLM-authored content\n(statement, options, explanation, code)"] --> Sanitize["sanitizeHtml()\nescape & < > \" '"]
-    Sanitize --> Branch{"Destination?"}
-    Branch -- "PDF export" --> Puppeteer["Puppeteer\n(hardened launch flags)"] --> PDF(["Watermarked PDF -> S3"])
-    Branch -- "API response" --> JSON(["JSON response to SPA\n(React escapes on render)"])
-```
+`POST /api/admin/organizations` is refused unless the caller's email is listed in `SUPERADMIN_EMAILS`. By default the list is empty, so nobody can create a tenant through the API. (Previously any organization's admin could.)
 
-Prior to PDF rendering or client transmission, all dynamic content passes through an entity encoder:
+## 5. Secrets at rest (`utils/crypto.ts`)
 
-```typescript
-export function sanitizeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#x27;')
-    .replace(/\//g, '&#x2F;');
-}
-```
+AES-256-GCM with a fresh 12-byte IV per value, keyed by `ENCRYPTION_KEY`. Stored as `enc:v1:<iv>:<tag>:<ciphertext>`.
 
-Puppeteer browser instances are launched with hardened security flags:
-```javascript
-const browser = await puppeteer.launch({
-  headless: 'new',
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-web-security=false',
-    '--disable-remote-fonts',
-  ],
-});
-```
+| Secret | Notes |
+|---|---|
+| Webhook signing secret | Shown to the admin once when the webhook is configured; only the ciphertext is stored. |
+| Per-organization LLM API keys | `PUT /api/admin/llm-keys`. Write-only: `GET` returns whether a key exists, where it comes from (`org` or `env`) and its last 4 characters — never the key. |
 
----
+Values written before encryption existed (no `enc:v1:` prefix) are still readable and are re-encrypted the next time they are set. Rotating `ENCRYPTION_KEY` makes stored secrets unreadable; re-enter them afterwards.
 
-## 5. Bring-Your-Own-Key (BYOK): Schema-Ready, Not Yet Implemented
+**Key lookup order for LLM calls:** the organization's own key, then the server-wide environment key.
 
-> **Status check:** `Organization.llmApiKeysEncrypted` exists in `schema.prisma` as a `Json?` column, and `ENCRYPTION_KEY` is a documented environment variable — but no code in `apps/api` currently reads, writes, or encrypts a per-organization key. Every LLM call today (`llmService.ts`) reads a single set of server-wide keys straight from `process.env.ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_GEMINI_API_KEY`. Earlier drafts of this document described AES-256-GCM envelope encryption as if it were live; it wasn't, and this section now says so directly instead of documenting aspiration as fact.
+## 6. Outbound webhooks
 
-The column and env var exist because this is the intended target design, and it's a contained addition when it's actually needed — an `encryptApiKey`/`decryptApiKey` pair using Node's `crypto.createCipheriv('aes-256-gcm', ...)`, a settings endpoint to write `llmApiKeysEncrypted`, and a change to `getLLMClient` to check the organization's decrypted key before falling back to the server-wide env var:
+- **SSRF guard** (`utils/urlSafety.ts`): the URL must be `https` (`http` is allowed outside production), carry no credentials, and every address its host resolves to must be public. Loopback, RFC 1918, link-local (including the cloud metadata address `169.254.169.254`), CGNAT, unique-local and IPv4-mapped IPv6 ranges are refused. Checked when the URL is saved **and again before every delivery**.
+- Redirects are not followed.
+- Each delivery is signed: `X-QuestionForge-Signature: sha256=<HMAC-SHA256 of the raw body>`.
+- `WEBHOOK_ALLOW_PRIVATE_TARGETS=true` permits localhost targets for development; it is ignored in production.
 
-```mermaid
-flowchart LR
-    subgraph Today ["Implemented today"]
-        Env["process.env.ANTHROPIC_API_KEY\n(server-wide, single tenant of keys)"] --> LLM1["llmService.getLLMClient()"]
-    end
+*Known gap:* there is a short window between our DNS check and the lookup `fetch` performs (DNS rebinding). Closing it needs an egress proxy or an HTTP agent pinned to the checked IP.
 
-    subgraph Target ["Target design (not built yet)"]
-        OrgKey[("Organization.llmApiKeysEncrypted\nAES-256-GCM, ENCRYPTION_KEY-derived")] -.-> Decrypt["decryptApiKey()"] -.-> LLM2["llmService.getLLMClient()\n(org key first, env var fallback)"]
-    end
-```
+## 7. Queue dashboard (Bull Board)
 
-Until that's built, treat `ENCRYPTION_KEY` and `llmApiKeysEncrypted` as reserved, not active.
+A browser tab cannot send an `Authorization` header, and the previous design put the login JWT in the URL (`/admin/queues?token=…`), where it ends up in access logs and browser history. Now:
+
+1. The admin console calls `POST /api/admin/queues/ticket` (normal bearer auth) and gets a random ticket stored in Redis for 60 seconds.
+2. The browser opens `/admin/queues?ticket=…`. The ticket is consumed atomically (`GETDEL`), so it works once.
+3. The server sets an `HttpOnly`, `SameSite=Strict` cookie scoped to `/admin/queues` holding a 1-hour JWT with `scope: "bullboard"`, and redirects to the clean URL.
+
+That cookie opens the dashboard only; the API rejects it.
+
+## 8. Input handling
+
+- **Zod on every body.** Invalid input returns `400` with the offending fields. (It used to surface as a 500.)
+- **Mass assignment:** `PATCH /api/questions/:id` uses a strict allow-list; `status`, `organizationId`, `validationResult` and anything else unknown is rejected.
+- **Edits cannot bypass validation:** changing a question's statement, answer, options, solutions, test cases or difficulty sets it back to `VALIDATING` and queues a re-validation. It cannot be approved until it passes again.
+- **PDF export:** all question content is HTML-escaped before it reaches Puppeteer; the template loads nothing from the network.
+- **Error responses:** in production, only messages written for the client (4xx `AppError`s) are returned; everything else is "An internal server error occurred".
+
+## 9. LLM-written code
+
+Generated solutions are untrusted code. They run in the Piston container on a network with no route to the database — see [sandboxed-execution.md](../architecture/sandboxed-execution.md). SQL drafts are screened for sqlite dot-commands and file/extension access before they run.
+
+## 10. Exports
+
+- With S3: uploaded and served through a presigned URL (default 300 s).
+- Without S3 (`EXPORT_STORAGE=local`): written to `EXPORT_LOCAL_DIR` and served at `/api/export/download/<64-hex token>` until `expiresAt`. The random token is the credential, exactly like a presigned URL. Tokens are matched against the database, and the file name is server-generated.
+
+## 11. Rate limiting
+
+Redis-backed, shared across replicas: a global limit per client address (`RATE_LIMIT_MAX_REQUESTS` per `RATE_LIMIT_WINDOW_MS`) and a stricter one on starting or retrying generation, counted **per signed-in user** (`GENERATE_RATE_LIMIT_PER_MIN`).
+
+## 12. Not done
+
+| Item | Status |
+|---|---|
+| SSO (SAML / OIDC) | Not implemented. The `ssoProvider` / `ssoId` columns exist; nothing uses them. |
+| Token in `localStorage` | The SPA keeps the JWT in `localStorage`, so an XSS bug in the frontend could read it. Moving to an `HttpOnly` cookie session would remove that. |
+| Content-Security-Policy | Helmet's CSP is disabled on the API. |
+| DNS-rebinding-proof webhooks | See §6. |
+| Self-service password reset | There is no "forgot password" email flow. A locked-out user needs an admin to reset their password. |
+| Password policy | Minimum 8 characters; no complexity rules, breach check or lockout after repeated failures. |
+| Imported content rights | Statements imported from LeetCode / GeeksforGeeks belong to those platforms. The app warns; it cannot check your licence. |

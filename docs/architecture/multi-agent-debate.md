@@ -1,84 +1,85 @@
-# LangGraph Generate → Validate → Retry Engine
+# Generate → Validate → Retry Engine
 
-This document specifies the real state machine that drives every question through Question Forge — implemented with `@langchain/langgraph`'s `StateGraph`/`Annotation` API in `packages/ai-orchestration`, and driven by concrete LLM/sandbox implementations in `apps/api`.
-
----
-
-## 1. The Fallacy of Single-Shot LLM Generation
-
-Relying on a single prompt —
-$$\text{Prompt} \longrightarrow \text{LLM} \longrightarrow \text{Question Output}$$
-— fails in predictable ways: hallucinated test assertions whose expected output doesn't match the problem, hidden constraint contradictions (stating $O(n)$ while the "optimal" solution is $O(n^2)$), and optimal/brute-force reference implementations that silently diverge on boundary cases.
-
-Question Forge addresses this with a **generate → validate → retry** loop instead of a single-shot call.
+How one question goes from "requested" to `VALIDATED` or `FAILED`, and exactly what "validated" means for each question type.
 
 ---
 
-## 2. The Real Graph: `packages/ai-orchestration/src/graphs/generateValidateGraph.ts`
+## 1. The idea
 
-There is exactly one `StateGraph` definition. Both `runDsaGenerationGraph` and `runOopsDebateGraph` (the two names the rest of the codebase and this doc's prior version referred to) are thin, differently-typed wrappers around the same compiled graph — they exist as two names because DSA and OOPS questions are validated completely differently, not because there are two engines.
-
-```typescript
-const GraphState = Annotation.Root({
-  maxAttempts: Annotation<number>,
-  attempt: Annotation<number>({ reducer: (_prev, next) => next, default: () => 0 }),
-  draft: Annotation<unknown>({ reducer: (_prev, next) => next, default: () => null }),
-  feedback: Annotation<string | null>({ reducer: (_prev, next) => next, default: () => null }),
-  passed: Annotation<boolean>({ reducer: (_prev, next) => next, default: () => false }),
-  validation: Annotation<unknown>({ reducer: (_prev, next) => next, default: () => null }),
-});
-
-new StateGraph(GraphState)
-  .addNode('generate', /* calls the injected generate() */)
-  .addNode('validate', /* calls the injected validate() */)
-  .addEdge(START, 'generate')
-  .addEdge('generate', 'validate')
-  .addConditionalEdges('validate', (state) =>
-    state.passed || state.attempt >= state.maxAttempts ? END : 'generate'
-  )
-  .compile();
-```
-
-The package itself never calls an LLM, a database, or the sandbox — `generate` and `validate` are plain async functions injected by the caller. That keeps `packages/ai-orchestration` unit-testable with mocked functions and zero network access (see `generateValidateGraph.test.ts`, 4 tests covering first-attempt pass, feedback-driven retry, exhausting `maxAttempts`, and both named wrappers sharing the engine), and lets `apps/api/src/services/generationService.ts` supply the real work.
+An LLM is good at writing a plausible question and bad at knowing whether it is correct. So nothing the model *claims* is trusted. Every draft is checked by something other than the model that wrote it, and when the check fails, the checker's report goes back to the model for another attempt.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Generate: attempt = 0
-    Generate --> Validate: draft
-    Validate --> [*]: passed
-    Validate --> Generate: !passed AND attempt < maxAttempts
-    Validate --> [*]: !passed AND attempt >= maxAttempts
+flowchart LR
+    S(["Question slot"]) --> G["generate\nLLM writes a draft as JSON"]
+    G --> V{"validate"}
+    V -- "passed" --> OK(["VALIDATED"])
+    V -- "failed, attempts left" --> G
+    V -- "failed, 3rd attempt" --> F(["FAILED\nwith the validator's reason"])
 ```
 
----
+The loop is a real `@langchain/langgraph` `StateGraph` in `packages/ai-orchestration/src/graphs/generateValidateGraph.ts`. It has two nodes (`generate`, `validate`) and one conditional edge. The graph knows nothing about LLMs, databases or sandboxes — `apps/api/src/services/generationService.ts` injects both nodes as plain async functions, which is why the graph can be unit-tested with no network.
 
-## 3. What `generate` Actually Does
+- Maximum attempts: **3** (`MAX_ATTEMPTS`).
+- One `Question` row per slot, however many attempts it takes. Retries update that row.
+- On a retry the prompt contains the previous draft **and the validator's report** (for example: `Optimal solution (java) printed "0" but the brute force (python) printed "-1" on input …`).
 
-`generationService.ts` injects a `generate` function that calls the configured LLM provider (`llmService.ts` — Anthropic, OpenAI, or Gemini, selected per organization) with a prompt built by `buildDSASystemPrompt` or `buildOOPSSystemPrompt`. On a retry (`attempt > 0`), the previous draft and the `feedback` string from the failed `validate` call are folded into the prompt as a "REVISION REQUEST" section, so the model is doing targeted repair, not blind regeneration.
+## 2. `generate`
 
-If the LLM call itself throws (rate limit, timeout, malformed JSON), `generate` catches it, backs off (`(attempt + 1) * 5000`ms), and returns a sentinel draft that `validate` short-circuits on — this still consumes one of the `maxAttempts` retries, but never writes a database row for a pure API failure.
+`buildDraftPrompt` (`services/prompts.ts`) builds a different prompt per question type, and `completeJson` (`services/llmService.ts`) sends it and checks the reply:
 
-## 4. What `validate` Actually Does (Two Different Strategies)
+1. The reply must contain one JSON object (markdown fences and stray prose around it are tolerated).
+2. That object must match the Zod schema for the type (`services/questionDrafts.ts`).
+3. A reply that was cut off at the token limit, or refused, is rejected.
 
-`validate` first runs the same feature-hashed deduplication check regardless of question type (see [`vector-deduplication.md`](../database/vector-deduplication.md)) — a duplicate is treated as a validation failure and fed back as feedback. Past that:
+A reply that fails any of these is **not** a crash: it becomes feedback ("Reply did not match the required JSON shape — testCases: at least 6 test cases are required") and the model tries again. A provider outage (429/5xx/network) is different: it is retried with backoff, and if it persists the whole job is retried by the queue (see [queue-and-worker-engine.md](./queue-and-worker-engine.md)).
 
-### DSA: Sandbox Differential Testing
-`runValidationPipeline` → `_validateDSA` executes the optimal **and** brute-force solutions, for every configured language, against the test suite (plus deterministically injected edge cases from `edgeCaseService.ts`), in parallel through `packages/sandbox`'s Piston client. It passes only if every optimal-solution run matches its expected output *and* matches the brute-force run's output (differential testing) — see [`sandboxed-execution.md`](./sandboxed-execution.md).
+Each prompt is also given up to 40 titles that already exist in the organization for that type, with the instruction not to repeat them.
 
-### OOPS / Conceptual: Cross-Model Adversary + Judge Debate
-`runValidationPipeline` → `_validateConceptual` calls `runAdversarialDebate` (`apps/api/src/services/agentDebateService.ts`), which is real and running, but simpler than earlier drafts of this document claimed:
+## 3. `validate` — what is actually checked
 
-1. **Adversary** — a prompt sent to a *different* LLM provider than the one that generated the draft (e.g. generated with Anthropic → critiqued with OpenAI), asked to find any ambiguity, factual error, or bad distractor option. Returns `{ foundIssue, issue, severity }`.
-2. **Judge** — a second prompt (on the best available provider) given the Adversary's finding and asked for a binary decision: `{ decision: "PASS" | "FAIL", reasoning }`. The rule of thumb it's instructed to apply: lean PASS on a `minor` finding unless genuinely misleading, lean FAIL on a `major` one unless the Adversary is clearly wrong, and always PASS when the Adversary found nothing.
+| Question type | Method (stored as `validationResult.method`) | What proves it |
+|---|---|---|
+| `DSA` | `sandbox_differential` | Code is **executed** against a brute-force oracle, then a second model writes its own solution **from the statement alone** and that is executed too. See [sandboxed-execution.md](./sandboxed-execution.md). |
+| `SQL` | `sandbox_sql` | Two independently written queries are **executed** in SQLite on ≥ 2 datasets and must return the same rows. |
+| `MCQ`, `OOPS`, `CONCEPTUAL` | `llm_review` | Structure checks → **blind solve** → adversarial review. Not executed. |
+| `SYSTEM_DESIGN` | `llm_review` | Rubric structure checks → adversarial review. Not executed. |
 
-This is a **binary PASS/FAIL decision with a text report**, not a numeric 0–100 rubric score — if you want a scored rubric, that's a real, scoped enhancement to `agentDebateService.ts`'s Judge prompt and response parsing, not something to assume is already there.
+Before any of this, a draft is rejected if its statement is a near-copy of an existing question (see [vector-deduplication.md](../database/vector-deduplication.md)).
 
-If only one LLM provider is configured, the Adversary falls back to the same provider as the generator (logged as a warning) rather than failing outright — cross-model disagreement is the design goal, not a hard requirement.
+The result records honestly which method ran. For `llm_review` questions the execution stages (`optimalSolutionPassed`, `crossCheckPassed`, …) are `false`, not "passed by default", and the UI labels them "LLM-reviewed (not executed)".
 
----
+### 3.1 MCQ-style review (`services/reviewService.ts`)
 
-## 5. Retry Semantics, End to End
+```mermaid
+flowchart TD
+    A["Structure\nright number of options, unique ids and texts,\nanswer is one of the ids"] -->|ok| B["Blind solve\nreviewer answers WITHOUT seeing the key"]
+    A -->|bad| X(["fail"])
+    B -->|"picks a different option\nor says none / several are right"| X
+    B -->|"agrees with the key"| C["Adversary\nlooks for one serious defect"]
+    C -->|"no defect"| P(["pass"])
+    C -->|"defect found"| J{"Judge\nis it real and serious?"}
+    J -->|PASS| P
+    J -->|FAIL| X
+```
 
-`generationService.ts` runs one `(difficulty, type)` slot per graph invocation, `maxAttempts: 3`. A single Prisma `Question` row is created on the first attempt and **updated in place** on every retry — earlier versions of this pipeline created a new row per attempt and only updated the final one, leaving failed intermediate attempts stuck at `VALIDATING` forever; that bug is fixed by having every `validate` call write to the same row via a `questionId` captured in closure.
+- The **blind solve** is the check that catches a wrong or ambiguous answer key: a second model that cannot see the key must land on it.
+- If the blind solver agrees with the key but says another option is "also defensible", that concern is sent to the judge.
+- The reviewer is a **different provider** than the generator whenever a second provider has a key (`getReviewerLLMClient`). Review calls can use a cheaper model via `ANTHROPIC_REVIEW_MODEL` / `OPENAI_REVIEW_MODEL` / `GEMINI_REVIEW_MODEL`. If only one provider is configured the review still runs, but the result is stored with `crossModel: false` and the details say "Same-model review".
 
-On the last exhausted attempt, the row is marked `FAILED` with whatever validation detail was last produced. On success, it's marked `VALIDATED`, its embedding is stored, and a `question.validated` webhook fires.
+### 3.2 It fails closed
+
+A reviewer reply that cannot be parsed is retried once. If it is still unusable, the call **throws** — it is never turned into a pass. The job is retried; if the reviewer stays unusable the question ends up `FAILED`. (Earlier versions defaulted to PASS when the judge's reply could not be parsed.)
+
+## 4. After the loop
+
+| Outcome | What is written |
+|---|---|
+| Passed | `status: VALIDATED`, `validationResult`, test cases with **executed** expected outputs, the question is attached to `paperId` if one was given, a `question.validated` webhook is queued. |
+| Failed after 3 attempts | `status: FAILED`, `validationResult` with the last report, the similarity vector is cleared so the failed draft cannot block later ones as a "duplicate". |
+| No usable draft at all | No question row. The item is `FAILED` with the reason. |
+
+## 5. What this does not guarantee
+
+- **`llm_review` is still an LLM's opinion.** The blind solve makes a wrong answer key much less likely; it does not make it impossible. These questions need the human review step.
+- **The independent solver narrows, but does not close, the statement gap.** Differential testing alone only proves the two reference solutions agree with each other; they were written by the same model and can share a misreading. The independent solver (a second model, statement only) catches that when it reads the statement differently. If both models misread it the same way, nothing catches it — and with a single LLM provider configured, the "second" model is the same one.
+- **The prompts have only been exercised with a scripted model in the test suite.** They have not been tuned against live providers; expect to adjust them once you see real pass rates.

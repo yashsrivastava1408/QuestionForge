@@ -17,7 +17,13 @@ export interface ExportRecord {
 }
 
 export interface WebhookPayload {
-  event: 'question.approved' | 'paper.exported' | 'paper.ready';
+  event:
+    | 'question.validated'
+    | 'question.approved'
+    | 'question.rejected'
+    | 'generation.completed'
+    | 'paper.exported'
+    | 'webhook.ping';
   timestamp: string;
   organizationId: string;
   data: Record<string, unknown>;

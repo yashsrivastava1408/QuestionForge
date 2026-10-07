@@ -4,6 +4,8 @@ import { prisma } from './utils/prisma.js';
 import { connectRedis } from './utils/redis.js';
 import { startGenerationWorker } from './queues/generationWorker.js';
 import { startWebhookWorker } from './queues/webhookQueue.js';
+import { assertSecureConfig } from './utils/config.js';
+import { startMaintenance } from './services/maintenanceService.js';
 
 /**
  * Dedicated Background Worker Process
@@ -16,17 +18,20 @@ import { startWebhookWorker } from './queues/webhookQueue.js';
  */
 async function startWorker() {
   logger.info('🚀 [Worker Process] Initializing Question Forge Background Worker...');
+  assertSecureConfig();
 
   await connectRedis();
 
   const generationWorker = startGenerationWorker();
   const webhookWorker = startWebhookWorker();
+  const stopMaintenance = startMaintenance();
 
   logger.info('✅ [Worker Process] All queue workers active and listening for jobs.');
 
   const shutdown = async (signal: string) => {
     logger.info(`[Worker Process] Received ${signal}. Draining active jobs...`);
 
+    stopMaintenance();
     try {
       await Promise.all([
         generationWorker.close(),

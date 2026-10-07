@@ -16,6 +16,43 @@ This is the same shape as the CI/CD diagram in the root `README.md` (`## Core Wo
 
 ---
 
+## 0. Required Configuration
+
+With `NODE_ENV=production` the API and the worker **exit at boot** unless all of these hold (`apps/api/src/utils/config.ts`):
+
+| Setting | Requirement |
+|---|---|
+| `JWT_SECRET` | 32+ random characters, not an example value. `openssl rand -hex 32` |
+| `ENCRYPTION_KEY` | 64 hex characters, not all zeros. `openssl rand -hex 32`. Encrypts webhook secrets and per-organization LLM keys; if you change it, stored secrets must be re-entered. |
+| `ALLOW_MOCK_AUTH` | Must not be `true`. |
+| `SANDBOX_DRIVER` | Must not be `local`. |
+
+Also needed:
+
+- **An LLM key** — a server-wide `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_GEMINI_API_KEY`, or per-organization keys under Admin → LLM Keys. Configure two providers if you can, so MCQ and system-design questions are reviewed by a different model than the one that wrote them.
+- **Piston runtimes** — `python`, `java`, `gcc`, `node`, and `sqlite3` (for SQL questions).
+- **Export storage** — S3 credentials. With more than one API replica S3 is required, because replicas do not share a disk. On a single machine you may set `EXPORT_STORAGE=local` instead.
+- **Redis** with `maxmemory-policy noeviction`.
+- **A reverse proxy that does not buffer** `/api/generate/status/*/stream` (Server-Sent Events) and forwards `/admin/queues` to the API. `apps/frontend/nginx.conf` does both.
+
+### Database migrations
+
+Run before starting new code:
+
+```bash
+npm run db:migrate:deploy
+```
+
+If your database was created with `prisma db push` rather than migrations, or if this is the first deploy since the schema-drift fix, read [Schema & Migrations → Applying them](../database/schema-and-indexing.md#applying-them) first. **Take a backup** before applying to a database with data in it.
+
+### First admin
+
+There is no public sign-up. `npm run db:seed` creates the `demo` organization with `admin@demo.com` / `password123`. **Sign in and change that password** (sidebar → Change Password) before exposing the service, and reset or deactivate `reviewer@demo.com` under Admin → Team Members. Further users are added there too.
+
+To create additional organizations through the API, list the operator's email in `SUPERADMIN_EMAILS`.
+
+---
+
 ## 1. Production Architecture Checklist
 
 Before launching production workloads, verify that external managed services satisfy these baseline specifications:
@@ -94,11 +131,9 @@ Load balancers and CI/CD pipelines probe two dedicated health endpoints:
 - **Payload**:
   ```json
   {
-    "status": "healthy",
-    "checks": {
-      "database": "connected",
-      "redis": "connected"
-    }
+    "status": "ready",
+    "uptimeSeconds": 1234,
+    "services": { "database": "healthy", "redis": "healthy" }
   }
   ```
 
@@ -108,9 +143,12 @@ If either check fails, the probe returns `503 Service Unavailable`, prompting th
 
 ## 5. Disaster Recovery Runbook
 
-### RPO & RTO Objectives
-- **Recovery Point Objective (RPO)**: $< 5\text{ minutes}$ (AWS RDS Point-in-Time-Recovery + Redis AOF).
-- **Recovery Time Objective (RTO)**: $< 15\text{ minutes}$ for complete regional failover.
+### RPO & RTO Targets
+These are targets to design your infrastructure for, not properties the application guarantees. They have not been tested with a failover drill.
+- **Recovery Point Objective (RPO)**: under 5 minutes (needs RDS point-in-time recovery and Redis AOF).
+- **Recovery Time Objective (RTO)**: under 15 minutes.
+
+Postgres is the source of truth for questions and for generation progress. If Redis is lost, queued jobs are lost with it: items that were waiting stay `QUEUED` and have to be requested again.
 
 ### Incident Playbooks
 
@@ -127,8 +165,8 @@ flowchart TD
 ```
 
 #### Scenario A: BullMQ Queue Backlog Spiking
-1. **Symptom**: `generation.waiting` in `/api/admin/queues/stats` exceeds 50; SSE progress updates stall.
-2. **Diagnosis**: Check Piston sandbox health and external LLM rate-limit headers.
+1. **Symptom**: `generation.waiting` in `/api/admin/queues/stats` keeps growing; items sit at "Waiting in queue".
+2. **Diagnosis**: Each job is one question. Open a running job's status: a `stage` of "Waiting to retry — …" names the failing dependency (LLM provider or sandbox). Otherwise the sandbox is usually the bottleneck — a 4-language question is about 300 executions.
 3. **Action**: Scale the worker cluster horizontally:
    ```bash
    docker compose -f docker-compose.prod.yml up -d --scale worker=6
@@ -144,6 +182,20 @@ flowchart TD
 2. **Diagnosis**: Inspect key memory breakdown via `redis-cli --bigkeys`.
 3. **Action**: Verify that analytics cache keys have active TTLs and BullMQ completed job retention is configured:
    ```typescript
-   removeOnComplete: { count: 1000, age: 3600 },
-   removeOnFail: { count: 5000, age: 86400 }
+   // apps/api/src/queues/generationQueue.ts
+   removeOnComplete: { age: 24 * 3600, count: 2000 },
+   removeOnFail: { age: 7 * 24 * 3600 }
    ```
+
+#### Items stuck "in progress"
+The worker's maintenance sweeper re-queues any unfinished item that has made no progress for `STALE_ITEM_MINUTES` (default 15) and has no job in the queue — for example after Redis lost its data. If items stay stuck longer than that, check that a worker process is actually running (the sweeper lives in the worker) and look for `[Maintenance]` lines in its log.
+
+#### Scenario D: Questions failing with "Gave up after 3 attempts"
+1. **Symptom**: Items end `FAILED` with an infrastructure error rather than a validation report.
+2. **Diagnosis**: The message says which dependency: `Piston unreachable` / `Piston API error` (sandbox), a provider status such as `429` or `503` (LLM), or `No API key configured`.
+3. **Action**: Fix the dependency, then open the job on the Generate page and use **Retry N failed** (or `POST /api/generate/jobs/:jobId/retry-failed`). Nothing is left half-done: failed items never leave a question in `VALIDATING`.
+
+#### Scenario E: Most questions of one type fail validation
+1. **Symptom**: Items end `FAILED` with a validation report (not an infrastructure error).
+2. **Diagnosis**: Read `failureReason`. "Missing an optimal or brute-force solution for: …" or "Compilation failed" for one language points at that language's prompt notes or Piston runtime. "Difficulty check failed" on many questions means the model is not producing a real brute-force gap — consider `VALIDATION_ENFORCE_COMPLEXITY_GAP=false` while you tune. "An independent solver chose …" on MCQs means the answer keys are genuinely contested. "An independent solver that saw ONLY the statement …" on coding questions means the statements leave room for a different reading; if it rejects questions you consider fine, the reviewer model may be too weak — set a stronger `*_REVIEW_MODEL`, or turn the check off with `VALIDATION_BLIND_SOLVER=false`. Analytics → Generation Results shows the mix of failure reasons.
+3. **Action**: Adjust the prompt in `apps/api/src/services/prompts.ts`, the model (`ANTHROPIC_MODEL` etc.), or the languages requested.

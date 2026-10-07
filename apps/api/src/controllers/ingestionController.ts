@@ -17,6 +17,14 @@ const fetchCategorySchema = z.object({
   save: z.boolean().optional().default(false),
 });
 
+/**
+ * Returned with every ingestion response. Problem statements on these sites are
+ * their owners' copyrighted content; fetching one does not grant a right to
+ * reuse it in your own assessments.
+ */
+const LICENSING_NOTICE =
+  'Imported statements belong to their source platform. Use them as internal reference, or make sure you have the right to reuse them before putting them in an assessment.';
+
 async function persistAsDraft(question: IngestedQuestion, organizationId: string) {
   return prisma.question.create({
     data: {
@@ -40,8 +48,8 @@ async function persistAsDraft(question: IngestedQuestion, organizationId: string
  * GeeksforGeeks) into the question bank as `DRAFT` rows, using
  * `@question-forge/ingestion`. This is deliberately separate from the AI
  * generation pipeline (`generationService.ts`) — an ingested question has no
- * optimal/brute-force solution or test cases yet, it's a real-world problem
- * statement staged for a reviewer to complete or regenerate solutions for.
+ * optimal/brute-force solution or test cases yet. `POST /api/questions/:id/complete`
+ * generates those for the imported statement and validates them in the sandbox.
  */
 export class IngestionController {
   static async fetchOne(req: Request, res: Response, next: NextFunction) {
@@ -56,11 +64,11 @@ export class IngestionController {
       }
 
       if (!save) {
-        return res.json({ success: true, saved: false, question });
+        return res.json({ success: true, saved: false, question, notice: LICENSING_NOTICE });
       }
 
       const created = await persistAsDraft(question, req.user!.organizationId);
-      res.status(201).json({ success: true, saved: true, question: created });
+      res.status(201).json({ success: true, saved: true, question: created, notice: LICENSING_NOTICE });
     } catch (err) { next(err); }
   }
 
@@ -72,13 +80,13 @@ export class IngestionController {
       const questions = await adapter.fetchByCategory(category, limit);
 
       if (!save) {
-        return res.json({ success: true, saved: false, count: questions.length, questions });
+        return res.json({ success: true, saved: false, count: questions.length, questions, notice: LICENSING_NOTICE });
       }
 
       const created = await Promise.all(
         questions.map((q) => persistAsDraft(q, req.user!.organizationId))
       );
-      res.status(201).json({ success: true, saved: true, count: created.length, questions: created });
+      res.status(201).json({ success: true, saved: true, count: created.length, questions: created, notice: LICENSING_NOTICE });
     } catch (err) { next(err); }
   }
 }

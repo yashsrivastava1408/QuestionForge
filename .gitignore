@@ -30,6 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Locally-stored paper exports (EXPORT_STORAGE=local)
+.exports/
+
 # OS
 .DS_Store
 Thumbs.db

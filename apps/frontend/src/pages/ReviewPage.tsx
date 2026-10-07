@@ -5,6 +5,7 @@ import {
   CheckCircle, XCircle, ChevronDown, ChevronUp,
   CheckCircle2, Cpu
 } from 'lucide-react';
+import QuestionDetail, { validationSummary } from '../components/QuestionDetail';
 
 export default function ReviewPage() {
   const qc = useQueryClient();
@@ -23,6 +24,32 @@ export default function ReviewPage() {
   });
 
   const questions = data?.questions ?? [];
+
+  // Bulk selection. Only ids still in the queue count, so a question that was
+  // reviewed elsewhere silently drops out of the selection.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
+  const selectedIds = questions.map((q: any) => q.id).filter((id: string) => selected.has(id));
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  const bulkMutation = useMutation({
+    mutationFn: (decision: 'APPROVED' | 'REJECTED') =>
+      axios.post('/api/questions/review-bulk', { ids: selectedIds, decision }).then((r) => r.data),
+    onSuccess: (result, decision) => {
+      setSelected(new Set());
+      setBulkResult(
+        `${result.updated} question${result.updated === 1 ? '' : 's'} ${decision === 'APPROVED' ? 'approved' : 'rejected'}` +
+        (result.skipped.length ? `; ${result.skipped.length} skipped because they were no longer awaiting review.` : '.')
+      );
+      qc.invalidateQueries({ queryKey: ['questions-review'] });
+    },
+    onError: (err: any) => setBulkResult(err?.response?.data?.error?.message ?? 'Bulk review failed.'),
+  });
 
   if (isLoading) {
     return (
@@ -45,7 +72,7 @@ export default function ReviewPage() {
           </div>
           <h1 style={{ margin: 0 }}>Review Queue</h1>
           <p style={{ margin: 0, marginTop: 4 }}>
-            {questions.length} question{questions.length !== 1 ? 's' : ''} awaiting human verification before promotion to production.
+            {questions.length} question{questions.length !== 1 ? 's' : ''} passed automated validation and now need a human decision.
           </p>
         </div>
 
@@ -78,13 +105,33 @@ export default function ReviewPage() {
               The Review Queue is Fully Clear!
             </h3>
             <p style={{ color: 'var(--text-secondary)', maxWidth: 460 }}>
-              All generated technical targets have been approved or dispatched. Initiate a new generation batch to populate the queue.
+              Nothing is waiting for review. Start a new generation batch to fill the queue.
             </p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.length === questions.length}
+                  onChange={(e) => setSelected(e.target.checked ? new Set(questions.map((q: any) => q.id)) : new Set())}
+                />
+                Select all ({questions.length})
+              </label>
+              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{selectedIds.length} selected</span>
+              <button className="btn btn-success btn-sm" disabled={selectedIds.length === 0 || bulkMutation.isPending} onClick={() => bulkMutation.mutate('APPROVED')}>
+                <CheckCircle size={14} /> Approve selected
+              </button>
+              <button className="btn btn-danger btn-sm" disabled={selectedIds.length === 0 || bulkMutation.isPending} onClick={() => bulkMutation.mutate('REJECTED')}>
+                <XCircle size={14} /> Reject selected
+              </button>
+              {bulkResult && <span role="status" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{bulkResult}</span>}
+            </div>
+
             {questions.map((q: any, i: number) => {
               const isExpanded = expanded === q.id;
+              const summary = validationSummary(q.validationResult);
 
               return (
                 <div
@@ -96,25 +143,36 @@ export default function ReviewPage() {
                   }}
                 >
                   <div className="question-card-header">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${q.title}`}
+                      checked={selected.has(q.id)}
+                      onChange={() => toggle(q.id)}
+                      style={{ marginTop: 4, marginRight: 12 }}
+                    />
                     <div style={{ flex: 1 }}>
                       <div className="question-card-title">{q.title}</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                         <span className={`badge badge-${q.difficulty.toLowerCase()}`}>{q.difficulty}</span>
                         <span className={`badge badge-${q.type.toLowerCase()}`}>{q.type}</span>
                         <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{q.topic}</span>
-                        {q.validationResult?.crossCheckPassed && (
-                          <span style={{
-                            fontSize: 12,
-                            color: 'var(--color-success)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            background: 'rgba(16,185,129,0.1)',
-                            padding: '2px 8px',
-                            borderRadius: 12,
-                            border: '1px solid rgba(16,185,129,0.25)'
-                          }}>
-                            <CheckCircle2 size={12} /> Cross-Check Consensus Passed
+                        {summary && (
+                          <span
+                            title={summary.label}
+                            style={{
+                              fontSize: 12,
+                              color: summary.executed ? 'var(--color-success)' : 'var(--color-warning)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              background: summary.executed ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)',
+                              padding: '2px 8px',
+                              borderRadius: 12,
+                              border: `1px solid ${summary.executed ? 'rgba(16,185,129,0.25)' : 'rgba(245,158,11,0.25)'}`
+                            }}
+                          >
+                            {summary.executed ? <CheckCircle2 size={12} /> : <Cpu size={12} />}
+                            {summary.executed ? 'Verified by execution' : 'LLM-reviewed (not executed)'}
                           </span>
                         )}
                       </div>
@@ -125,40 +183,13 @@ export default function ReviewPage() {
                       onClick={() => setExpanded(isExpanded ? null : q.id)}
                       style={{ padding: '6px 12px', gap: 6 }}
                     >
-                      <span>{isExpanded ? 'Hide Details' : 'Inspect Target'}</span>
+                      <span>{isExpanded ? 'Hide Details' : 'Inspect & Edit'}</span>
                       {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                     </button>
                   </div>
 
                   {isExpanded && (
-                    <div style={{ marginTop: 20, paddingTop: 18, borderTop: '1px solid var(--border-light)' }}>
-                      <div style={{ marginBottom: 16 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 8 }}>
-                          Problem Statement & Specifications
-                        </div>
-                        <div className="code-block" style={{ whiteSpace: 'pre-wrap' }}>
-                          {q.statement}
-                        </div>
-                      </div>
-
-                      {q.validationResult && (
-                        <div style={{
-                          background: 'rgba(15, 23, 42, 0.6)',
-                          border: '1px solid var(--border-light)',
-                          borderRadius: 'var(--radius-md)',
-                          padding: '14px 18px',
-                          marginBottom: 16,
-                          fontSize: 13,
-                          color: 'var(--text-secondary)'
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
-                            <Cpu size={14} color="var(--color-primary)" />
-                            Adversary & Sandbox Consensus Report:
-                          </div>
-                          <div>{q.validationResult.details || 'Deterministic mathematical checks and compiler test suites passed with 0 faults.'}</div>
-                        </div>
-                      )}
-                    </div>
+                    <QuestionDetail id={q.id} onChanged={() => qc.invalidateQueries({ queryKey: ['questions-review'] })} />
                   )}
 
                   <div className="question-card-actions">

@@ -9,3 +9,6 @@ analyticsRouter.get('/overview', authenticate, AnalyticsController.getOverview);
 
 // GET /api/analytics/validation-rate — Sandbox pass rates (Redis cached 120s)
 analyticsRouter.get('/validation-rate', authenticate, AnalyticsController.getValidationRate);
+
+// GET /api/analytics/generation — Pass rate, attempts, spend and failure reasons for recent generation
+analyticsRouter.get('/generation', authenticate, AnalyticsController.getGeneration);

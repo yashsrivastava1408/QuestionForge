@@ -42,6 +42,7 @@ Each prompt is also given up to 40 titles that already exist in the organization
 | `DSA` | `sandbox_differential` | Code is **executed** against a brute-force oracle, then a second model writes its own solution **from the statement alone** and that is executed too. See [sandboxed-execution.md](./sandboxed-execution.md). |
 | `SQL` | `sandbox_sql` | Two independently written queries are **executed** in SQLite on ≥ 2 datasets and must return the same rows. |
 | `MCQ`, `OOPS`, `CONCEPTUAL` | `llm_review` | Structure checks → **blind solve** → adversarial review. Not executed. |
+| `MCQ`, `OOPS`, `CONCEPTUAL` that show code and ask for its output | `sandbox_snippet` | The draft supplies a complete program. It is **run first**: its real output must equal the claimed output, be exactly the keyed option, and match no other option. Then the blind solve and adversarial review run as above. A statement that shows code and asks for output but supplies no program is rejected. |
 | `SYSTEM_DESIGN` | `llm_review` | Rubric structure checks → adversarial review. Not executed. |
 
 Before any of this, a draft is rejected if its statement is a near-copy of an existing question (see [vector-deduplication.md](../database/vector-deduplication.md)).
@@ -64,7 +65,7 @@ flowchart TD
 
 - The **blind solve** is the check that catches a wrong or ambiguous answer key: a second model that cannot see the key must land on it.
 - If the blind solver agrees with the key but says another option is "also defensible", that concern is sent to the judge.
-- The reviewer is a **different provider** than the generator whenever a second provider has a key (`getReviewerLLMClient`). Review calls can use a cheaper model via `ANTHROPIC_REVIEW_MODEL` / `OPENAI_REVIEW_MODEL` / `GEMINI_REVIEW_MODEL`. If only one provider is configured the review still runs, but the result is stored with `crossModel: false` and the details say "Same-model review".
+- The reviewer is a **different provider** than the generator whenever a second provider has a key (`getReviewerLLMClient`); `REVIEW_PROVIDER` pins it explicitly, and the result is still labelled same-provider if it equals the drafter. Review calls can use a cheaper model via `ANTHROPIC_REVIEW_MODEL` / `OPENAI_REVIEW_MODEL` / `GEMINI_REVIEW_MODEL`. If only one provider is configured the review still runs, but the result is stored with `crossModel: false` and the details say "Same-model review".
 
 ### 3.2 It fails closed
 

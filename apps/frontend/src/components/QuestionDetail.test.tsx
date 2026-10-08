@@ -33,7 +33,7 @@ describe('validationSummary', () => {
       .toEqual({ executed: true, label: 'Executed in sandbox: 16 inputs, 40 runs, checked against a brute-force oracle' });
     expect(validationSummary({ method: 'sandbox_sql' })?.executed).toBe(true);
     expect(validationSummary({ method: 'llm_review', crossModel: true })?.executed).toBe(false);
-    expect(validationSummary({ method: 'llm_review', crossModel: false })?.label).toMatch(/same LLM that wrote it/);
+    expect(validationSummary({ method: 'llm_review', crossModel: false })?.label).toMatch(/same provider that wrote it/);
     expect(validationSummary(null)).toBeNull();
   });
 });
@@ -48,7 +48,7 @@ describe('QuestionDetail', () => {
     renderDetail();
     expect(await screen.findByText('Which keyword prevents overriding?')).toBeInTheDocument();
     expect(screen.getByText('correct answer').parentElement).toHaveTextContent('B) final');
-    expect(screen.getByText(/Reviewed by the same LLM that wrote it/)).toBeInTheDocument();
+    expect(screen.getByText(/Reviewed by the same provider that wrote it/)).toBeInTheDocument();
   });
 
   it('sends only the changed fields and follows the re-validation job', async () => {

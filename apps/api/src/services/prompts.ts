@@ -139,6 +139,9 @@ RULES
 - Options must be similar in length and style so the correct one does not stand out.
 - If you include code, it must be complete enough that its behaviour is fully determined.
 
+RUNNING THE CODE
+If the question shows code and asks what it prints or returns, you must also give "verification": a COMPLETE program (${Object.keys(LANGUAGE_NOTES).join(', ')}) that contains exactly the snippet from the question plus whatever scaffolding it needs (a main method, imports), and prints only the output the question asks about. It is executed, and its real output must equal "expectedOutput" and match the text of the correct option. Options for such questions must be the exact output text (e.g. "10 20"), not a description of it. If the question asks for a compile error or a runtime exception, do not use this question style — pick a question whose answer is a printed value. For questions that show no code, or are about design and concepts, set "verification" to null.
+
 ${JSON_ONLY}
 {
   "title": "short descriptive title",
@@ -147,7 +150,8 @@ ${JSON_ONLY}
   "tags": ["..."],
   "options": [{ "id": "A", "text": "..." }],
   "answer": "the id of the correct option",
-  "explanation": "why the correct option is right and why each other option is wrong"
+  "explanation": "why the correct option is right and why each other option is wrong",
+  "verification": { "language": "java", "program": "<complete program>", "expectedOutput": "exact stdout" } or null
 }`;
 }
 

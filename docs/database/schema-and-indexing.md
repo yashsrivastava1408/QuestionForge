@@ -44,7 +44,7 @@ erDiagram
 | `status` | `DRAFT` (imported, not validated) → `VALIDATING` → `VALIDATED` → `APPROVED` / `REJECTED`, or `FAILED`. |
 | `optimalSolution`, `bruteForceSolution` | JSON. For DSA: `{ "<language>": "<complete program>" }`. For SQL: `{ "sql": "<query>" }`. |
 | `testCases` | JSON array of `{ input, expectedOutput, label, isSample?, isEdgeCase? }`. After validation the outputs are the **executed** ones, and generated cases are included. |
-| `validationAssets` | What validation needs to run again: `{ inputGenerator }` for DSA, `{ sqlDdl, sqlDatasets, orderMatters }` for SQL, `{ requirements, rubric }` for system design. |
+| `validationAssets` | What validation needs to run again: `{ inputGenerator }` for DSA, `{ sqlDdl, sqlDatasets, orderMatters }` for SQL, `{ requirements, rubric }` for system design, `{ verification: { language, program, expectedOutput } }` for OOPS/conceptual questions that show code. |
 | `validationResult` | The last validation report: `method`, `passed`, `stages`, `stats`, `details`. |
 | `embeddingVector` | 256 floats used for lexical duplicate detection. Empty for `FAILED` and never-validated rows. See [vector-deduplication.md](./vector-deduplication.md). |
 | `retryCount` | How many times the draft was rewritten after a failed validation. |

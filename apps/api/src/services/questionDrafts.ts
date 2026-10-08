@@ -48,6 +48,18 @@ export const codeDraftSchema = z.object({
 });
 export type CodeDraft = z.infer<typeof codeDraftSchema>;
 
+/**
+ * For questions that show code and ask what it does or prints: a complete
+ * program that is actually executed, so the answer key is checked by running
+ * code and not only by a second model's opinion.
+ */
+export const snippetVerificationSchema = z.object({
+  language: z.enum(['python', 'java', 'cpp', 'javascript']),
+  program: text(10),
+  expectedOutput: looseString,
+});
+export type SnippetVerification = z.infer<typeof snippetVerificationSchema>;
+
 export const mcqDraftSchema = z.object({
   title: text(3),
   statement: text(15),
@@ -56,6 +68,8 @@ export const mcqDraftSchema = z.object({
   options: z.array(z.object({ id: text(), text: looseString })).min(2),
   answer: text(),
   explanation: text(10),
+  // Models send null when there is nothing to run.
+  verification: snippetVerificationSchema.nullish().transform((v) => v ?? undefined),
 });
 export type McqDraft = z.infer<typeof mcqDraftSchema>;
 
@@ -162,5 +176,10 @@ export function buildQuestionData(
   }
 
   const d = draft as McqDraft;
-  return { ...base, options: d.options, answer: d.answer };
+  return {
+    ...base,
+    options: d.options,
+    answer: d.answer,
+    validationAssets: (d.verification ? { verification: d.verification } : null) as any,
+  };
 }

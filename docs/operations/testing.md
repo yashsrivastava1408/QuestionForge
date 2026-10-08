@@ -86,7 +86,7 @@ CI runs both suites on every push and pull request, after applying the migration
 
 Be clear-eyed about these before relying on the system:
 
-- **No live LLM.** The prompts and JSON contracts have never been run against Anthropic, OpenAI or Gemini in this suite. Real pass rates, and whether each provider reliably returns the requested shape, are unknown until you run a batch.
+- **No live LLM in the automated suites.** They use a scripted model. A separate manual run (10 questions, Groq `openai/gpt-oss-120b`, local code runner) validated 4 of 5 DSA and 4 of 5 OOPS questions; Anthropic, OpenAI and Gemini have not been run through the pipeline. Real pass rates, and whether each provider reliably returns the requested shape, are unknown until you run a batch.
 - **No real Piston.** The Piston client is tested with mocked HTTP. Real execution in tests uses the local runner. Runtime names and versions on your Piston instance (including `sqlite3`) are unverified.
 - **No browser.** Frontend tests render components in jsdom. Nothing drives the app in a real browser.
 - **No load test.** See [scalability-and-benchmarks.md](./scalability-and-benchmarks.md).

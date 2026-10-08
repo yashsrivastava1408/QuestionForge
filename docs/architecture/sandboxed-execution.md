@@ -83,11 +83,27 @@ For each dataset a fresh SQLite database gets the DDL and that dataset, and both
 
 Scripts containing sqlite3 dot-commands (`.shell`, `.read`, …), `ATTACH DATABASE`, `load_extension`, `readfile` or `writefile` are rejected before anything runs.
 
-## 4. Concurrency and cost
+## 4. Code shown in OOPS and conceptual questions
+
+OOPS and conceptual MCQs that show a code snippet and ask what it prints are also proven by execution (`verifySnippet`, `sandbox_snippet`). The draft must carry a `verification` object — `{ language, program, expectedOutput }`, where `program` is the exact snippet plus whatever scaffolding it needs. It is stored in `validationAssets.verification` and run through the same sandbox as everything else, before any review call:
+
+| Check | Fails when |
+|---|---|
+| The program runs | It does not compile, crashes, or exceeds the time limit. |
+| Claimed output | The program's real stdout differs from the `expectedOutput` the draft claimed. |
+| Answer key | The real output is not exactly the text of the option marked correct. |
+| Uniqueness | Another option has the same text as the real output (two correct answers). |
+| Missing program | The statement shows code and asks for output, but no `verification` was supplied (`needsSnippetVerification`). |
+
+A sandbox outage throws `SandboxUnavailableError` and retries the job, as for coding questions. A passing snippet is followed by the usual blind solve and adversarial review; a failing one is rejected without spending review calls, and the report is fed back to the generator. Questions that show no code, or ask for a compile error or exception, are not covered and stay `llm_review`.
+
+Known limit: if a reviewer edits the code inside a verified question, the stored program is not updated, so re-validation compares the old program's output with the edited question and rejects it.
+
+## 5. Concurrency and cost
 
 All sandbox calls of one validation share a `p-limit` pool (`SANDBOX_CONCURRENCY`, default 10). A 4-language question with ~35 inputs makes roughly 290 sandbox calls, so validation takes far longer than one LLM call and Piston capacity — not the LLM — is usually what limits throughput. Size the sandbox accordingly.
 
-## 5. Limits
+## 6. Limits
 
 - The 3 s limit and the speed comparison are wall-clock and include Piston's per-call overhead, so the complexity check is coarse. It reliably separates O(n) from O(n²) at n = 10⁵; it will not separate O(n) from O(n log n).
 - The Piston driver is covered by tests with a mocked HTTP layer. All real-execution tests use the `local` driver. Run one generation against your Piston instance before relying on it.

@@ -14,8 +14,15 @@ const TOPICS = [
 
 const QUESTION_TYPES = ['DSA', 'OOPS', 'SQL', 'SYSTEM_DESIGN', 'CONCEPTUAL', 'MCQ'];
 const LANGUAGES = ['python', 'java', 'cpp', 'javascript'];
-const STYLES = ['Google-style', 'Amazon-style', 'Service-based', 'Startup', 'Data Science'];
+const STYLES = [
+  // Campus-placement patterns first: this is what a placement-training team assesses against.
+  'TCS NQT', 'Infosys campus', 'Wipro NLTH', 'Cognizant GenC', 'Accenture campus', 'Capgemini campus',
+  'Service-based', 'Product-based', 'Startup', 'Google-style', 'Amazon-style', 'Data Science',
+];
 const ROLE_LEVELS = ['intern', 'sde1', 'sde2', 'senior', 'lead'];
+const ROLE_LABELS: Record<string, string> = {
+  intern: 'Fresher / Intern — campus placement standard',
+};
 const LLM_PROVIDERS = ['gemini', 'anthropic', 'openai'];
 
 /** Shown in the provider picker. The exact model is chosen server-side (see Admin → LLM Keys). */
@@ -30,7 +37,7 @@ const VALIDATION_NOTES: Record<string, string> = {
   DSA: 'runs every solution in the sandbox against a brute-force oracle',
   SQL: 'runs two independent queries in SQLite on several datasets',
   MCQ: 'blind-solved by a second model, then adversarially reviewed',
-  OOPS: 'blind-solved by a second model, then adversarially reviewed',
+  OOPS: 'code in the question is run to prove the answer, then blind-solved by a second model and adversarially reviewed',
   CONCEPTUAL: 'blind-solved by a second model, then adversarially reviewed',
   SYSTEM_DESIGN: 'rubric reviewed by a second model (not executable)',
 };
@@ -38,13 +45,13 @@ const VALIDATION_NOTES: Record<string, string> = {
 export default function GeneratePage() {
   const navigate = useNavigate();
   const [config, setConfig] = useState({
-    roleLevel: 'sde1',
-    topics: ['Arrays', 'Dynamic Programming'],
-    difficultyDistribution: { easy: 30, medium: 50, hard: 20 },
+    roleLevel: 'intern',
+    topics: ['Arrays'],
+    difficultyDistribution: { easy: 50, medium: 40, hard: 10 },
     totalQuestions: 10,
     questionTypes: ['DSA'],
-    languages: ['python', 'java'],
-    companyStyle: 'Google-style',
+    languages: ['python'],
+    companyStyle: 'TCS NQT',
     llmProvider: 'gemini',
     mcqOptionsCount: 4,
   });
@@ -199,7 +206,7 @@ export default function GeneratePage() {
                   onChange={e => setConfig(c => ({ ...c, roleLevel: e.target.value }))}
                 >
                   {ROLE_LEVELS.map(r => (
-                    <option key={r} value={r}>{r.toUpperCase()} — Technical Interview Standard</option>
+                    <option key={r} value={r}>{ROLE_LABELS[r] ?? `${r.toUpperCase()} — Technical Interview Standard`}</option>
                   ))}
                 </select>
               </div>

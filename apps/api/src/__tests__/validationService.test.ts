@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { executeLocally } from '../../../../packages/sandbox/src/localRunner.js';
-import { validateCodeQuestion, validateSqlQuestion, blindSolveCodeQuestion, normalizeOutput, SandboxUnavailableError } from '../services/validationService.js';
+import { validateCodeQuestion, validateSqlQuestion, blindSolveCodeQuestion, normalizeOutput, SandboxUnavailableError, verifySnippet, needsSnippetVerification } from '../services/validationService.js';
 import { UsageMeter, type LLMClient } from '../services/llmService.js';
 import { STATEMENT } from './fixtures/maxSubarray.js';
 import { OPTIMAL, BRUTE, BUGGY_OPTIMAL_PYTHON, GENERATOR, WEAK_GENERATOR, TEST_CASES } from './fixtures/maxSubarray.js';
@@ -255,5 +255,78 @@ describe('normalizeOutput', () => {
   it('ignores trailing whitespace but not content', () => {
     expect(normalizeOutput('1 2 \r\n3\n\n')).toBe('1 2\n3');
     expect(normalizeOutput('1  2')).not.toBe(normalizeOutput('1 2'));
+  });
+});
+
+describe.runIf(hasPython)('verifySnippet — the code in an OOPS question is actually run', () => {
+  const program = [
+    'class A:',
+    '    def f(self): return "A"',
+    'class B(A):',
+    '    def f(self): return "B"',
+    'print(B().f(), A().f())',
+  ].join('\n');
+  const verification = { language: 'python', program, expectedOutput: 'B A' };
+  const question = (answer: string, options: string[]) => ({
+    statement: 'What does this code print?\n```python\nprint(B().f(), A().f())\n```',
+    options: options.map((text, i) => ({ id: String.fromCharCode(65 + i), text })),
+    answer,
+  });
+
+  it('passes when the real output is exactly the keyed option and no other', async () => {
+    const out = await verifySnippet(question('B', ['A A', 'B A', 'B B', 'A B']), verification, executeLocally);
+    expect(out?.passed).toBe(true);
+    expect(out?.report).toMatch(/real output "B A" matches option B/);
+  });
+
+  it('rejects a wrong answer key, naming the option that is really correct', async () => {
+    const out = await verifySnippet(question('C', ['A A', 'B A', 'B B', 'A B']), verification, executeLocally);
+    expect(out?.passed).toBe(false);
+    expect(out?.report).toMatch(/option B/);
+  });
+
+  it('rejects a draft whose claimed output is not what the program prints', async () => {
+    const out = await verifySnippet(question('B', ['A A', 'B A', 'B B', 'A B']), { ...verification, expectedOutput: 'B B' }, executeLocally);
+    expect(out?.passed).toBe(false);
+    expect(out?.report).toMatch(/claimed output was wrong/);
+  });
+
+  it('rejects two options that both equal the real output', async () => {
+    const out = await verifySnippet(question('B', ['B A', 'B A', 'B B', 'A B']), verification, executeLocally);
+    expect(out?.passed).toBe(false);
+    expect(out?.report).toMatch(/two correct answers/);
+  });
+
+  it('rejects a program that crashes', async () => {
+    const out = await verifySnippet(question('B', ['A A', 'B A']), { ...verification, program: 'print(undefined_name)' }, executeLocally);
+    expect(out?.passed).toBe(false);
+    expect(out?.report).toMatch(/did not run cleanly/);
+  });
+
+  it('demands a program when the statement shows code and asks for the output', async () => {
+    const out = await verifySnippet(question('B', ['A A', 'B A']), undefined, executeLocally);
+    expect(out?.passed).toBe(false);
+    expect(out?.report).toMatch(/no runnable "verification" program/);
+  });
+
+  it('has nothing to check for a question without code', async () => {
+    const out = await verifySnippet(
+      { statement: 'Which principle hides internal state behind methods?', options: [{ id: 'A', text: 'Encapsulation' }, { id: 'B', text: 'Inheritance' }], answer: 'A' },
+      undefined,
+      executeLocally
+    );
+    expect(out).toBeNull();
+  });
+
+  it('throws, rather than failing the question, when the sandbox is down', async () => {
+    const down = async () => ({ stdout: '', stderr: 'unreachable', exitCode: 1, timedOut: false, executionTimeMs: 0, infraError: true });
+    await expect(verifySnippet(question('B', ['A A', 'B A']), verification, down)).rejects.toBeInstanceOf(SandboxUnavailableError);
+  });
+});
+
+describe('needsSnippetVerification', () => {
+  it('flags code that asks for output, and nothing else', () => {
+    expect(needsSnippetVerification('What is the output?\n```java\nint x = 1;\n```')).toBe(true);
+    expect(needsSnippetVerification('Which keyword prevents a method from being overridden in Java?')).toBe(false);
   });
 });

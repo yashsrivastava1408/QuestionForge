@@ -26,7 +26,8 @@ const blindSolveSchema = z.object({
 
 const adversarySchema = z.object({
   foundIssue: z.boolean(),
-  severity: z.string().optional().default('minor'),
+  // Models send null here when they found nothing to report.
+  severity: z.string().nullable().optional().transform((s) => s ?? 'minor'),
   issue: z.string().nullable().optional(),
 });
 

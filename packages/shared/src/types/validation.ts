@@ -49,8 +49,12 @@ export interface ValidationStats {
 export interface ValidationPipelineResult {
   questionId: string;
   passed: boolean;
-  /** How the question was checked. 'llm_review' means no code was executed. */
-  method: 'sandbox_differential' | 'sandbox_sql' | 'llm_review';
+  /**
+   * How the question was checked. 'llm_review' means no code was executed;
+   * 'sandbox_snippet' means the code shown in the question was run and its real
+   * output matched the answer key, on top of the model review.
+   */
+  method: 'sandbox_differential' | 'sandbox_sql' | 'sandbox_snippet' | 'llm_review';
   stages: {
     syntaxCheck: boolean;
     optimalSolutionPassed: boolean;

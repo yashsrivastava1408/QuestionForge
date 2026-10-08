@@ -9,7 +9,7 @@ import type {
 import pLimit from 'p-limit';
 import { executeSandbox } from '@question-forge/sandbox';
 import { logger } from '../utils/logger.js';
-import { draftKindFor } from './questionDrafts.js';
+import { draftKindFor, snippetVerificationSchema } from './questionDrafts.js';
 import { z } from 'zod';
 import { reviewDesign, reviewMcq, type Reviewer } from './reviewService.js';
 import { completeJson, LlmOutputError } from './llmService.js';
@@ -460,6 +460,78 @@ function unsafeSql(sql: string): string | null {
   return null;
 }
 
+const CODE_IN_STATEMENT = /```|[;{}]\s*(\n|$)|\bdef \w+\(|\bprint\(|System\.out|std::cout|console\.log/;
+const ASKS_FOR_OUTPUT = /\b(output|prints?|printed|displays?|outputs?|returns?|result of|value of)\b/i;
+
+/** True when the statement shows code and asks what it prints — the answer must then be provably run. */
+export function needsSnippetVerification(statement: string): boolean {
+  return CODE_IN_STATEMENT.test(statement) && ASKS_FOR_OUTPUT.test(statement);
+}
+
+const optionKey = (s: string) =>
+  s.replace(/^[`'"]+|[`'"]+$/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+export interface SnippetCheck {
+  passed: boolean;
+  report: string;
+}
+
+/**
+ * OOPS/concept questions that show code: run the program the draft supplied and
+ * require that its real output (1) equals what the draft claims, (2) is exactly
+ * the option marked correct, and (3) is not also the text of another option.
+ * Returns null when the question has nothing to run.
+ */
+export async function verifySnippet(
+  question: { statement: string; options: unknown; answer: string | null },
+  verification: unknown,
+  exec: SandboxExecutor = executeSandbox
+): Promise<SnippetCheck | null> {
+  const parsed = snippetVerificationSchema.safeParse(verification);
+  if (!parsed.success) {
+    return needsSnippetVerification(question.statement)
+      ? {
+          passed: false,
+          report: 'The question shows code and asks for its output, but no runnable "verification" program was supplied. Add one that contains the exact snippet and prints the answer.',
+        }
+      : null;
+  }
+  const { language, program, expectedOutput } = parsed.data;
+
+  const run = await sandboxLimit(() => exec({ language, version: 'latest', code: program }));
+  if (run.infraError) throw new SandboxUnavailableError(run.stderr || 'Sandbox unavailable');
+  if (run.timedOut || run.exitCode !== 0) {
+    return { passed: false, report: `The verification program did not run cleanly: ${describeFailure(run)}. Fix the program so the snippet compiles and runs.` };
+  }
+
+  const actual = normalizeOutput(run.stdout);
+  if (actual !== normalizeOutput(expectedOutput)) {
+    return {
+      passed: false,
+      report: `Running the verification program printed "${clip(actual, 120)}" but the draft claimed "${clip(normalizeOutput(expectedOutput), 120)}". The claimed output was wrong.`,
+    };
+  }
+
+  const options = Array.isArray(question.options) ? (question.options as { id: string; text: unknown }[]) : [];
+  const key = String(question.answer ?? '').trim().toUpperCase();
+  const matching = options.filter((o) => optionKey(String(o.text)) === optionKey(actual));
+  const keyed = matching.find((o) => String(o.id).trim().toUpperCase() === key);
+  if (!keyed) {
+    const marked = options.find((o) => String(o.id).trim().toUpperCase() === key);
+    return {
+      passed: false,
+      report: `Running the code printed "${clip(actual, 120)}", which is ${matching.length ? `option ${matching.map((o) => o.id).join(', ')}` : 'none of the options'}, but the answer key marks option ${key} ("${clip(String(marked?.text ?? ''), 80)}"). Make the correct option's text exactly the printed output.`,
+    };
+  }
+  if (matching.length > 1) {
+    return {
+      passed: false,
+      report: `More than one option equals the real output "${clip(actual, 120)}" (options ${matching.map((o) => o.id).join(', ')}), so the question has two correct answers.`,
+    };
+  }
+  return { passed: true, report: `The code in the question was run (${language}); its real output "${clip(actual, 80)}" matches option ${key} and no other option.` };
+}
+
 /**
  * SQL problems are checked by execution: both queries run against every dataset
  * in a fresh SQLite database and must return the same rows. The second,
@@ -645,20 +717,46 @@ export async function runValidationPipeline(
   }
 
   if (!ctx.reviewer) throw new Error(`A reviewer model is required to validate ${question.type} questions.`);
+
+  // Questions that show code and ask for its output are proven by running that
+  // code first; a wrong key is rejected without spending any review calls.
+  let snippet: SnippetCheck | null = null;
+  if (kind === 'mcq') {
+    snippet = await verifySnippet(question, assets.verification);
+    if (snippet && !snippet.passed) {
+      return {
+        result: {
+          ...base,
+          passed: false,
+          method: 'sandbox_snippet',
+          stages: {
+            syntaxCheck: false,
+            optimalSolutionPassed: false,
+            bruteForcePassed: false,
+            crossCheckPassed: false,
+            edgeCasesPassed: false,
+          },
+          crossCheckPassed: false,
+          details: snippet.report,
+        },
+      };
+    }
+  }
+
   await onStage(kind === 'mcq' ? 'Review: blind solve + adversarial review' : 'Review: adversarial rubric review');
   const review = kind === 'mcq'
     ? await reviewMcq(question, ctx.reviewer, ctx.mcqOptionsCount)
     : await reviewDesign(question, ctx.reviewer);
 
-  // No code is executed for these types. The execution stages stay false rather
-  // than being reported as passed.
+  // Without a snippet no code is executed for these types, and the execution
+  // stages stay false rather than being reported as passed.
   return {
     result: {
       ...base,
       passed: review.passed,
-      method: 'llm_review',
+      method: snippet ? 'sandbox_snippet' : 'llm_review',
       stages: {
-        syntaxCheck: false,
+        syntaxCheck: !!snippet?.passed,
         optimalSolutionPassed: false,
         bruteForcePassed: false,
         crossCheckPassed: false,
@@ -668,7 +766,7 @@ export async function runValidationPipeline(
       },
       crossCheckPassed: false,
       crossModel: ctx.reviewer.crossModel,
-      details: `${ctx.reviewer.crossModel ? '[Cross-model review]' : '[Same-model review — only one LLM provider is configured]'} ${review.report}`,
+      details: `${snippet ? `${snippet.report} ` : ''}${ctx.reviewer.crossModel ? '[Cross-model review]' : '[Same-provider review — the reviewer is not a different provider from the drafter]'} ${review.report}`,
     },
   };
 }

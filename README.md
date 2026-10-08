@@ -52,6 +52,7 @@ It depends on the question type, and the app always says which one applied.
 | **DSA** | Every solution, in every requested language, is run against a brute-force oracle on hand-written **and randomly generated** inputs. The statement's examples must match the executed output. On a maximum-size input the optimal solution must finish in 3 s and the brute force must be clearly slower. Then a second model writes its own solution **from the statement alone**, and that program must print the same answers. | ✅ |
 | **SQL** | Two independently written queries run in SQLite on several datasets and must return the same rows. | ✅ |
 | **MCQ / OOPS / Conceptual** | A second model answers the question **without seeing the answer key** and must land on it. Then an adversary looks for defects and a judge rules on them. | — |
+| **OOPS / Conceptual that show code and ask for its output** | The draft must include a complete program. It is **run first**: its real output must equal the claimed output, be exactly the keyed option, and match no other option. A wrong key is rejected before any review call. The blind solve and adversary then run as above. | ✅ |
 | **System design** | The grading rubric is checked for structure, then reviewed by an adversary and a judge. | — |
 
 For the last two rows there is nothing to execute, so the result is an informed opinion, not a proof — which is why every question still goes through a human before it is used. The UI labels these "LLM-reviewed (not executed)" rather than implying more.
@@ -104,6 +105,7 @@ When validation fails, the validator's report — for example *"Optimal solution
 - A difficulty check: a "medium" or "hard" problem that brute force solves at maximum size is rejected.
 - **Independent solver:** a second model solves each coding problem from the statement alone; if its program disagrees with the reference solutions, the statement is ambiguous or the solutions are wrong, and the draft is rejected.
 - SQL validated by running two queries in SQLite.
+- Questions that show code and ask for its output (OOPS, conceptual) have that code **executed** and the answer key checked against the real output.
 - Blind-solve + adversarial review for non-executable questions, by a different provider when one is configured. It **fails closed**: an unreadable reviewer reply is never treated as a pass.
 
 **Review and editing**
@@ -137,7 +139,7 @@ When validation fails, the validator's report — for example *"Optimal solution
 
 **Verified by tests in this repository**
 
-- 172 unit tests across 5 workspaces. Those for the validation engine run **real** Python, JavaScript, C++, Java and SQLite programs.
+- 181 unit tests across 5 workspaces. Those for the validation engine run **real** Python, JavaScript, C++, Java and SQLite programs.
 - 49 end-to-end tests against a real Postgres, Redis, BullMQ queue and workers, with real code execution, webhook delivery and PDF export. Only the LLM is scripted.
 - CI applies the migrations to a fresh database and runs both suites.
 
@@ -145,7 +147,7 @@ When validation fails, the validator's report — for example *"Optimal solution
 
 | | |
 |---|---|
-| Live LLMs | The prompts have only been exercised with a scripted model. Real pass rates per provider are unknown until you run a batch. |
+| Live LLMs | Only a small real run exists: Groq `openai/gpt-oss-120b` drafting with the local code runner, 10 questions (5 DSA in Python, 5 OOPS in Java) — 4 of 5 validated in each group (one DSA failed on a provider JSON error; one OOPS was rejected for not supplying a runnable program). Anthropic, OpenAI and Gemini have not been exercised by the pipeline, and no larger batch has been run. |
 | Real Piston | The Piston client is tested with mocked HTTP; real-execution tests use a local process runner. |
 | Browser | Frontend tests run in jsdom. Nothing drives the UI in a real browser. |
 | Load | No load test has been run. There are no throughput numbers. |
@@ -226,6 +228,9 @@ The full list, with comments, is in [`.env.example`](./.env.example). The ones t
 | `VALIDATION_ENFORCE_COMPLEXITY_GAP` | Fail medium/hard questions that brute force can solve | `true` |
 | `VALIDATION_BLIND_SOLVER` | Have a second model solve coding questions from the statement alone (one extra LLM call each) | `true` |
 | `ANTHROPIC_REVIEW_MODEL` / `OPENAI_REVIEW_MODEL` / `GEMINI_REVIEW_MODEL` | A cheaper model for the short review calls | same as drafting |
+| `OPENAI_BASE_URL` | Point the `openai` provider at any OpenAI-compatible API, e.g. Groq (`https://api.groq.com/openai/v1`) | OpenAI |
+| `REVIEW_PROVIDER` | Pin which provider reviews drafts. Results are labelled same-provider if it equals the drafter | a different provider than the drafter, if one has a key |
+| `LLM_PRICE_INPUT_PER_MTOK` / `LLM_PRICE_OUTPUT_PER_MTOK` | USD per million tokens, for providers without a built-in price; without them cost is shown as unknown | — |
 | `ENABLE_EMBEDDED_WORKERS` | Run workers inside the API process | on in dev, off in prod |
 | `EXPORT_STORAGE` / `EXPORT_LOCAL_DIR` | `local` to store exports on disk instead of S3 | S3 if configured |
 | `S3_BUCKET_NAME`, `AWS_*` | S3 export storage | — |
@@ -270,14 +275,14 @@ There is no public sign-up. The first admin comes from `npm run db:seed`.
 ```jsonc
 // POST /api/generate
 {
-  "roleLevel": "sde1",                       // intern | sde1 | sde2 | senior | lead
+  "roleLevel": "intern",                     // intern (fresher) | sde1 | sde2 | senior | lead
   "topics": ["Arrays", "Graphs"],
   "difficultyDistribution": { "easy": 30, "medium": 50, "hard": 20 },   // must sum to 100
   "totalQuestions": 10,
   "questionTypes": ["DSA", "SQL", "MCQ"],    // DSA | SQL | MCQ | OOPS | CONCEPTUAL | SYSTEM_DESIGN
   "languages": ["python", "java"],           // python | java | cpp | javascript (DSA only)
   "llmProvider": "anthropic",                // anthropic | openai | gemini
-  "companyStyle": "Google-style",            // optional
+  "companyStyle": "TCS NQT",                  // optional, free text (e.g. Infosys campus, Google-style)
   "mcqOptionsCount": 4,                      // optional
   "paperId": "…"                             // optional: attach validated questions to this paper
 }
@@ -352,13 +357,13 @@ There is no public sign-up. The first admin comes from `npm run db:seed`.
 ## Testing
 
 ```bash
-npm test              # 172 unit tests; no database, Redis, Docker or LLM key needed
+npm test              # 181 unit tests; no database, Redis, Docker or LLM key needed
 npm run test:e2e      # 49 end-to-end tests; needs a disposable Postgres and Redis
 ```
 
 | Workspace | Tests | Covers |
 |---|---:|---|
-| `apps/api` | 120 | Validation engine and independent solver (real code execution), review logic, draft schemas, failure classification, crypto, SSRF guard, config checks |
+| `apps/api` | 129 | Validation engine and independent solver (real code execution), review logic, OOPS code-output verification, draft schemas, failure classification, crypto, SSRF guard, config checks |
 | `packages/sandbox` | 13 | Piston client (mocked HTTP), local runner (real processes) |
 | `packages/ai-orchestration` | 4 | The LangGraph retry state machine |
 | `packages/ingestion` | 8 | LeetCode / GeeksforGeeks adapters |

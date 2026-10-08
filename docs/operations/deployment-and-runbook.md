@@ -29,7 +29,7 @@ With `NODE_ENV=production` the API and the worker **exit at boot** unless all of
 
 Also needed:
 
-- **An LLM key** — a server-wide `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_GEMINI_API_KEY`, or per-organization keys under Admin → LLM Keys. Configure two providers if you can, so MCQ and system-design questions are reviewed by a different model than the one that wrote them.
+- **An LLM key** — a server-wide `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_GEMINI_API_KEY`, or per-organization keys under Admin → LLM Keys. Configure two providers if you can, so MCQ and system-design questions are reviewed by a different model than the one that wrote them (or pin the reviewer with `REVIEW_PROVIDER`). The `openai` provider also works with any OpenAI-compatible API such as Groq: set `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL`. Free tiers have tight per-minute limits, so lower `WORKER_CONCURRENCY` and request fewer languages per coding question.
 - **Piston runtimes** — `python`, `java`, `gcc`, `node`, and `sqlite3` (for SQL questions).
 - **Export storage** — S3 credentials. With more than one API replica S3 is required, because replicas do not share a disk. On a single machine you may set `EXPORT_STORAGE=local` instead.
 - **Redis** with `maxmemory-policy noeviction`.

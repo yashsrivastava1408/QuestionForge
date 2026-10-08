@@ -22,12 +22,20 @@ export function validationSummary(v: any): { label: string; executed: boolean } 
     };
   }
   if (v.method === 'sandbox_sql') return { executed: true, label: 'Executed in SQLite: two independent queries agree on every dataset' };
+  if (v.method === 'sandbox_snippet') {
+    return {
+      executed: true,
+      label: v.crossModel
+        ? 'Code in the question was run and its output matches the answer key; also reviewed by a second LLM provider'
+        : 'Code in the question was run and its output matches the answer key; also reviewed by the same provider that wrote it',
+    };
+  }
   if (v.method === 'llm_review') {
     return {
       executed: false,
       label: v.crossModel
         ? 'Reviewed by a second LLM provider (not executable, so not run)'
-        : 'Reviewed by the same LLM that wrote it — only one provider is configured (not run)',
+        : 'Reviewed by the same provider that wrote it (not run)',
     };
   }
   return { executed: false, label: 'Validated by an older version of the pipeline' };

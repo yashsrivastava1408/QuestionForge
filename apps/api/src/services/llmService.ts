@@ -257,6 +257,15 @@ export function getReviewerLLMClient(
   generatorProvider: LLMProvider,
   orgKeys?: OrgLlmKeys
 ): { client: LLMClient; crossModel: boolean } {
+  // REVIEW_PROVIDER pins the reviewer (e.g. when one provider's free tier is too
+  // flaky to review with). It is still reported as same-model if it equals the drafter.
+  const pinned = process.env.REVIEW_PROVIDER as LLMProvider | undefined;
+  if (pinned && LLM_PROVIDERS.includes(pinned)) {
+    const resolved = resolveApiKey(pinned, orgKeys);
+    if (resolved) {
+      return { client: getOrCreateClient(pinned, resolved.key, 'review'), crossModel: pinned !== generatorProvider };
+    }
+  }
   for (const provider of LLM_PROVIDERS) {
     if (provider === generatorProvider) continue;
     const resolved = resolveApiKey(provider, orgKeys);
